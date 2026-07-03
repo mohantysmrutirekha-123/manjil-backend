@@ -67,15 +67,18 @@
 // });
 
 
-use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\API\AuthController;
-use App\Http\Controllers\API\InquiryController;
-use App\Http\Controllers\API\QuotationController;
 use App\Http\Controllers\API\AuditLogController;
+use App\Http\Controllers\API\AuthController;
+use App\Http\Controllers\Api\CustomerPoController;
+use App\Http\Controllers\Api\CustomerQuoteController;
 use App\Http\Controllers\API\DashboardController;
+use App\Http\Controllers\API\InquiryController;
 use App\Http\Controllers\API\ItemController;
+use App\Http\Controllers\Api\NegotiationController;
 use App\Http\Controllers\API\OpportunityController;
 use App\Http\Controllers\Api\PrincipalQuoteController;
+use App\Http\Controllers\API\QuotationController;
+use Illuminate\Support\Facades\Route;
 
 Route::get('/test', function () {
     return response()->json(['message' => 'API working','pass'=>bcrypt('admin')]);
@@ -165,4 +168,26 @@ Route::middleware('auth:sanctum')->group(function () {
 
   Route::post('/principal-quotation/{id}', [PrincipalQuoteController::class, 'update']);
 
+
+  Route::post('/convertTocustomerQuotation/{id}',[CustomerQuoteController::class, 'convertTocustomerQuotation']);
+
+  Route::get('/customerquotationList', [CustomerQuoteController::class, 'customerquotationList']);
+
+   Route::post('/customer-quotation/{id}', [CustomerQuoteController::class, 'update']);
+
+   Route::post('/convertTonegotiation/{id}',[NegotiationController::class, 'convertTonegotiation']);
+   Route::get('/negotiationList', [NegotiationController::class, 'negotiationList']);
+   Route::post('/negotiation/{id}', [NegotiationController::class, 'update']);
+
+
+
+    Route::post('/convertTocustomerpo/{id}',[CustomerPoController::class, 'convertTocustomerpo']);
+
+    Route::get('/customerpoList', [CustomerPoController::class, 'customerpoList']);
+
+    Route::post('/customer-po/{id}', [CustomerPoController::class, 'update']);
+
+
+
 });
+
