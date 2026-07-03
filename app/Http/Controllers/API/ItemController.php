@@ -156,20 +156,24 @@ class ItemController extends Controller
             }
 
             $req->validate([
-                'name'        => 'sometimes|required|string|max:255',
-                'description' => 'nullable|string',
-                'status'      => 'sometimes|required|in:active,inactive',
-                'created_by'  => 'required|exists:users,id',
+                'name'          => 'sometimes|required|string|max:255',
+                'description'   => 'nullable|string',
+                'mat_code'      => 'nullable|string|max:255',
+                'part_model_no' => 'nullable|string|max:255',
+                'status'        => 'sometimes|required|in:active,inactive',
+                'created_by'    => 'sometimes|nullable|exists:users,id',
             ]);
 
             $oldData = (array) $item;
 
             DB::table('items')->where('id', $id)->update([
-                'name'        => $req->name ?? $item->name,
-                'description' => $req->description ?? $item->description,
-                'status'      => $req->status ?? $item->status,
-                'created_by'      => $req->created_by ?? $item->created_by,
-                'updated_at'  => now()
+                'name'          => $req->name ?? $item->name,
+                'description'   => $req->description ?? $item->description,
+                'mat_code'      => $req->mat_code ?? $item->mat_code,
+                'part_model_no' => $req->part_model_no ?? $item->part_model_no,
+                'status'        => $req->status ?? $item->status,
+                'created_by'    => $req->created_by ?? $item->created_by,
+                'updated_at'    => now()
             ]);
 
             $updatedItem = DB::table('items')->where('id', $id)->first();
