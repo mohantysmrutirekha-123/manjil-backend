@@ -452,4 +452,87 @@ public function inquiryDetails($parentId)
     }
 
 
+
+
+
+
+
+
+  
+
+
+
+
+public function convertToprincipalqutation(Request $request, $id)
+{
+    try {
+
+        $firstInquiry = Inquiry::find($id);
+
+        if (!$firstInquiry) {
+            return response()->json([
+                'status' => 404,
+                'message' => 'Inquiry not found'
+            ], 404);
+        }
+
+        if ($firstInquiry->user_id != Auth::id() && Auth::user()->role != 'admin') {
+            return response()->json([
+                'status' => 403,
+                'message' => 'Unauthorized'
+            ], 403);
+        }
+
+        $validated = $request->validate([
+            'principal_quote_no'   => 'required|string|max:255',
+            'principal_quote_date' => 'required|date',
+            'status'               => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
+            'items'                => 'required|array',
+            'items.*.id'           => 'required|exists:inquiries,id',
+            'items.*.price'        => 'required|numeric'
+        ]);
+
+        foreach ($validated['items'] as $item) {
+
+            Inquiry::where('id', $item['id'])
+                ->where('inquiry_code', $firstInquiry->inquiry_code)
+                ->update([
+                    'enquiry_type'         => 'principal_quotation',
+                    'principal_quote_no'   => $validated['principal_quote_no'],
+                    'principal_quote_date' => $validated['principal_quote_date'],
+                    'price'                => $item['price'],
+                    'status'               => $validated['status'],
+                    'updated_by'           => Auth::id(),
+                ]);
+        }
+
+        return response()->json([
+            'status' => 200,
+            'message' => 'Principal quotation converted successfully.'
+        ]);
+
+    } catch (ValidationException $e) {
+
+        return response()->json([
+            'status' => 422,
+            'errors' => $e->errors()
+        ], 422);
+
+    } catch (\Exception $e) {
+
+        Log::error($e->getMessage());
+
+        return response()->json([
+            'status' => 500,
+            'message' => $e->getMessage()
+        ], 500);
+    }
+}
+
+
+
+
+
+
+
 }

@@ -75,6 +75,7 @@ use App\Http\Controllers\API\AuditLogController;
 use App\Http\Controllers\API\DashboardController;
 use App\Http\Controllers\API\ItemController;
 use App\Http\Controllers\API\OpportunityController;
+use App\Http\Controllers\Api\PrincipalQuoteController;
 
 Route::get('/test', function () {
     return response()->json(['message' => 'API working','pass'=>bcrypt('admin')]);
@@ -155,5 +156,13 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // ── Opportunity → Enquiry conversion ────────────────────────────────
     Route::post('/opportunity/convert-to-enquiry', [OpportunityController::class, 'convertToEnquiry']);
+
+
+    Route::put('/convertToprincipalqutation/{id}', [InquiryController::class, 'convertToprincipalqutation']);
+
+    Route::get('/principalquotationList', [PrincipalQuoteController::class, 'principalquotationList']);
+
+
+  Route::post('/principal-quotation/{id}', [PrincipalQuoteController::class, 'update']);
 
 });
