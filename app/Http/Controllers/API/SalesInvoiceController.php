@@ -80,7 +80,7 @@ class SalesInvoiceController extends Controller
                 'item:id,name,mat_code,part_model_no,description'
             ])
             ->whereColumn('id', 'parent_id')
-            ->whereIn('enquiry_type', ['Sales_Invoice', 'Purchase_Invoice'])
+            ->whereIn('enquiry_type', ['Sales_Invoice'])
             ->latest()
             ->get();
 
@@ -90,7 +90,7 @@ class SalesInvoiceController extends Controller
 
                 $items = Inquiry::with(['item:id,name,mat_code,part_model_no,description'])
                     ->where('parent_id', $enquiry->id)
-                    ->whereIn('enquiry_type', ['Sales_Invoice', 'Purchase_Invoice'])
+                    ->whereIn('enquiry_type', ['Sales_Invoice'])
                     ->get();
 
                 $data[] = [

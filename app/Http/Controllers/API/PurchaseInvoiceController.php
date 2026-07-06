@@ -81,7 +81,7 @@ class PurchaseInvoiceController extends Controller
                 'item:id,name,mat_code,part_model_no,description'
             ])
             ->whereColumn('id', 'parent_id')
-            ->whereIn('enquiry_type', ['Purchase_Invoice', 'PO_Principal'])
+            ->whereIn('enquiry_type', ['Purchase_Invoice','Sales_Invoice'])
             ->latest()
             ->get();
 
@@ -91,7 +91,7 @@ class PurchaseInvoiceController extends Controller
 
                 $items = Inquiry::with(['item:id,name,mat_code,part_model_no,description'])
                     ->where('parent_id', $enquiry->id)
-                    ->whereIn('enquiry_type', ['Purchase_Invoice', 'PO_Principal'])
+                    ->whereIn('enquiry_type', ['Purchase_Invoice', 'Sales_Invoice'])
                     ->get();
 
                 $data[] = [

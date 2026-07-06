@@ -113,7 +113,7 @@ class PoToPrincipalController extends Controller
                 'item:id,name,mat_code,part_model_no,description'
             ])
             ->whereColumn('id', 'parent_id')
-            ->whereIn('enquiry_type', ['PO_Principal', 'Customer_PO'])
+            ->whereIn('enquiry_type', ['PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'])
             ->latest()
             ->get();
 
@@ -125,7 +125,7 @@ class PoToPrincipalController extends Controller
                     'item:id,name,mat_code,part_model_no,description'
                 ])
                 ->where('parent_id', $enquiry->id)
-                ->whereIn('enquiry_type', ['PO_Principal', 'Customer_PO'])
+                ->whereIn('enquiry_type', ['PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'])
                 ->get();
 
                 $data[] = [

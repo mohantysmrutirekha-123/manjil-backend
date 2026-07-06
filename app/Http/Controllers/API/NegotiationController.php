@@ -118,7 +118,7 @@ public function negotiationList()
         ])
         ->whereColumn('id', 'parent_id')
         //   ->where('enquiry_type', 'Negotiation')
-        ->whereIn('enquiry_type', ['Negotiation', 'Customer_PO','PO_Principal'])
+        ->whereIn('enquiry_type', ['Negotiation', 'Customer_PO','PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'])
         ->latest()
         ->get();
 
@@ -132,7 +132,7 @@ public function negotiationList()
             ])
             ->where('parent_id', $enquiry->id)
             //  ->where('enquiry_type', 'Negotiation')
-            ->whereIn('enquiry_type', ['Negotiation', 'Customer_PO','PO_Principal'])
+            ->whereIn('enquiry_type', ['Negotiation', 'Customer_PO','PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'])
             ->get();
 
             $data[] = [
