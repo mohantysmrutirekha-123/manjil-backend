@@ -20,7 +20,8 @@ class PrincipalQuoteController extends Controller
             'item:id,name,mat_code,part_model_no,description'
         ])
         ->whereColumn('id', 'parent_id')
-          ->where('enquiry_type', 'principal_quotation')
+        //   ->where('enquiry_type', 'principal_quotation')
+        ->whereIn('enquiry_type', ['principal_quotation', 'customer_quotation', 'Customer_PO', 'Negotiation','Customer_PO', 'PO_Principal'])
         ->latest()
         ->get();
 
@@ -33,7 +34,8 @@ class PrincipalQuoteController extends Controller
                 'item:id,name,mat_code,part_model_no,description'
             ])
             ->where('parent_id', $enquiry->id)
-             ->where('enquiry_type', 'principal_quotation')
+            //  ->where('enquiry_type', 'principal_quotation')
+            ->whereIn('enquiry_type', ['principal_quotation', 'customer_quotation', 'Customer_PO', 'Negotiation','Customer_PO', 'PO_Principal'])
             ->get();
 
             $data[] = [

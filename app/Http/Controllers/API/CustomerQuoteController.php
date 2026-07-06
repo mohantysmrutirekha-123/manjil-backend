@@ -163,7 +163,8 @@ public function customerquotationList()
             'item:id,name,mat_code,part_model_no,description'
         ])
         ->whereColumn('id', 'parent_id')
-          ->where('enquiry_type', 'customer_quotation')
+        //   ->where('enquiry_type', 'customer_quotation')
+        ->whereIn('enquiry_type', ['customer_quotation', 'Customer_PO', 'Negotiation','Customer_PO', 'PO_Principal'])
         ->latest()
         ->get();
 
@@ -176,7 +177,8 @@ public function customerquotationList()
                 'item:id,name,mat_code,part_model_no,description'
             ])
             ->where('parent_id', $enquiry->id)
-             ->where('enquiry_type', 'customer_quotation')
+            //  ->where('enquiry_type', 'customer_quotation')
+            ->whereIn('enquiry_type', ['customer_quotation', 'Customer_PO', 'Negotiation','Customer_PO', 'PO_Principal'])
             ->get();
 
             $data[] = [
@@ -193,6 +195,8 @@ public function customerquotationList()
                 'offer_type'         => $enquiry->offer_type,
                 'quantity_quoted'    => $enquiry->quantity_quoted,
                 'validity_period'    => $enquiry->validity_period,
+                'quotation_no'       => $enquiry->quotation_no,
+                'budgetary_no'       => $enquiry->budgetary_no,
                 'price'                => $enquiry->price,
                 'status'               => $enquiry->status,
 

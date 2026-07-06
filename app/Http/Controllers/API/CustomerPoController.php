@@ -131,7 +131,8 @@ public function customerpoList()
             'item:id,name,mat_code,part_model_no,description'
         ])
         ->whereColumn('id', 'parent_id')
-          ->where('enquiry_type', 'Customer_PO')
+        //   ->where('enquiry_type', 'Customer_PO')
+        ->whereIn('enquiry_type', ['Customer_PO', 'PO_Principal'])
         ->latest()
         ->get();
 
@@ -144,7 +145,8 @@ public function customerpoList()
                 'item:id,name,mat_code,part_model_no,description'
             ])
             ->where('parent_id', $enquiry->id)
-             ->where('enquiry_type', 'Customer_PO')
+            //  ->where('enquiry_type', 'Customer_PO')
+            ->whereIn('enquiry_type', ['Customer_PO', 'PO_Principal'])
             ->get();
 
             $data[] = [

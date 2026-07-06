@@ -117,7 +117,8 @@ public function negotiationList()
             'item:id,name,mat_code,part_model_no,description'
         ])
         ->whereColumn('id', 'parent_id')
-          ->where('enquiry_type', 'Negotiation')
+        //   ->where('enquiry_type', 'Negotiation')
+        ->whereIn('enquiry_type', ['Negotiation', 'Customer_PO','PO_Principal'])
         ->latest()
         ->get();
 
@@ -130,7 +131,8 @@ public function negotiationList()
                 'item:id,name,mat_code,part_model_no,description'
             ])
             ->where('parent_id', $enquiry->id)
-             ->where('enquiry_type', 'Negotiation')
+            //  ->where('enquiry_type', 'Negotiation')
+            ->whereIn('enquiry_type', ['Negotiation', 'Customer_PO','PO_Principal'])
             ->get();
 
             $data[] = [
@@ -205,8 +207,8 @@ public function update(Request $request, $id)
         $parentId = $inquiry->parent_id;
 
         Inquiry::where('parent_id', $parentId)->update([
-            'quotation_no'   => $request->quotation_no,
-            'budgetary_no'    => $request->budgetary_no,
+            // 'quotation_no'   => $request->quotation_no,
+            // 'budgetary_no'    => $request->budgetary_no,
             'negotiation_details'    => $request->negotiation_details,
             'follow_notes' => $request->follow_notes,
             'discussion_dates'    => $request->discussion_dates,

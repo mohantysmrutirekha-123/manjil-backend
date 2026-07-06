@@ -334,57 +334,169 @@ public function inquiryDetails($parentId)
      * Update Inquiry
      */
    
-      public function update(Request $req, $id)
+    //   public function update(Request $req, $id)
+    // {
+    //     try {
+    //         $inquiry = Inquiry::find($id);
+    //         if (!$inquiry) {
+    //             return response()->json([
+    //                 'status'=> 404,
+    //                 'message' => 'Inquiry not found'
+    //                 ], 404);
+    //         }
+
+    //         if ($inquiry->user_id != Auth::id() && Auth::user()->role !== 'admin') {
+    //             return response()->json([
+    //                 'status' => '403',
+    //                 'message' => 'Unauthorized'
+    //                 ], 403);
+    //         }
+
+    //         $req->validate([
+    //             'enquiry_type'     => 'sometimes|required|string|max:100',
+    //             'customer_ids'     => 'sometimes|required|array',
+    //             'customer_ids.*'   => 'exists:users,id',
+    //             'item_id' => 'sometimes|required|exists:items,id',
+    //             'concerned_person' => 'sometimes|required|string|max:255',
+    //             'concerned_area'   => 'nullable|string|max:255',
+    //             'product_details'  => 'sometimes|required|string',
+    //             'quantity'         => 'sometimes|required|integer|min:1',
+    //             'principal_id'     => 'sometimes|required|integer',
+    //             'status'           => 'required|in:Price Requested,Pending,Closed,Completed,Regret'
+    //         ]);
+
+    //         $oldData =  $inquiry->toArray();
+
+    //         $inquiry->update([
+    //             'enquiry_type'     => $req->enquiry_type ?? $inquiry->enquiry_type,
+    //             'customer_ids'     => $req->customer_ids ?? $inquiry->customer_ids,
+    //             'item_id'          => $req->item_id ?? $inquiry->item_id,
+    //             'concerned_person' => $req->concerned_person ?? $inquiry->concerned_person,
+    //             'concerned_area'   => $req->concerned_area ?? $inquiry->concerned_area,
+    //             'product_details'  => $req->product_details ?? $inquiry->product_details,
+    //             'quantity'         => $req->quantity ?? $inquiry->quantity,
+    //             'principal_id'     => $req->principal_id ?? $inquiry->principal_id,
+    //             'status'           => $req->status ?? $inquiry->status,
+    //             'updated_by'       => Auth::id()
+    //         ]);
+
+    //         // Audit log
+    //         saveLog('UPDATE_INQUIRY', 'Inquiry', [
+    //             'old' => $oldData,
+    //             'new' => $inquiry
+    //         ]);
+
+    //         return response()->json([
+    //             'status' => 200,
+    //             'message' => 'Inquiry updated successfully',
+    //             'data'    => $inquiry
+    //         ]);
+
+    //     } catch (ValidationException $e) {
+    //         return response()->json([
+    //             'status' => 422,
+    //             'message' => 'Validation failed',
+    //             'errors'  => $e->errors()
+    //         ], 422);
+
+    //     } catch (\Exception $e) {
+    //         Log::error('Inquiry update error: '.$e->getMessage());
+    //         return response()->json([
+    //             'status' => 500,
+    //             'message' => 'Failed to update inquiry. Please try again later.'
+    //         ], 500);
+    //     }
+    // }
+
+    public function update(Request $req, $id)
     {
+        DB::beginTransaction();
+
         try {
             $inquiry = Inquiry::find($id);
             if (!$inquiry) {
                 return response()->json([
-                    'status'=> 404,
+                    'status' => 404,
                     'message' => 'Inquiry not found'
-                    ], 404);
+                ], 404);
             }
 
             if ($inquiry->user_id != Auth::id() && Auth::user()->role !== 'admin') {
                 return response()->json([
-                    'status' => '403',
+                    'status' => 403,
                     'message' => 'Unauthorized'
-                    ], 403);
+                ], 403);
             }
 
             $req->validate([
-                'enquiry_type'     => 'sometimes|required|string|max:100',
-                'customer_ids'     => 'sometimes|required|array',
-                'customer_ids.*'   => 'exists:users,id',
-                'item_id' => 'sometimes|required|exists:items,id',
-                'concerned_person' => 'sometimes|required|string|max:255',
-                'concerned_area'   => 'nullable|string|max:255',
-                'product_details'  => 'sometimes|required|string',
-                'quantity'         => 'sometimes|required|integer|min:1',
-                'principal_id'     => 'sometimes|required|integer',
-                'status'           => 'required|in:Price Requested,Pending,Closed,Completed,Regret'
+                'enquiry_type'      => 'sometimes|required|string|max:100',
+                'inquiry_id'        => 'sometimes|nullable|string|max:100',
+                'customer_id'       => 'sometimes|required|exists:users,id',
+                'principal_id'      => 'sometimes|required|exists:users,id',
+                'concerned_person'  => 'sometimes|required|string|max:255',
+                'concerned_area'    => 'nullable|string|max:255',
+                'status'            => 'sometimes|required|in:Price Requested,Pending,Closed,Completed,Regret',
+                'date'              => 'sometimes|required|date',
+                'items'             => 'sometimes|array|min:1',
+                'items.*.item_id'   => 'required_with:items|exists:items,id',
+                'items.*.quantity'  => 'required_with:items|integer|min:1',
             ]);
 
-            $oldData =  $inquiry->toArray();
+            $oldData = $inquiry->toArray();
 
-            $inquiry->update([
+            // parent_id is the id shared by every row belonging to this enquiry
+            $parentId = $inquiry->parent_id ?: $inquiry->id;
+
+            $sharedFields = [
+                'inquiry_id'       => $req->inquiry_id ?? $inquiry->inquiry_id,
+                'inquiry_date'     => $req->date ?? $inquiry->inquiry_date,
                 'enquiry_type'     => $req->enquiry_type ?? $inquiry->enquiry_type,
-                'customer_ids'     => $req->customer_ids ?? $inquiry->customer_ids,
-                'item_id'          => $req->item_id ?? $inquiry->item_id,
+                'customer_id'      => $req->customer_id ?? $inquiry->customer_id,
                 'concerned_person' => $req->concerned_person ?? $inquiry->concerned_person,
                 'concerned_area'   => $req->concerned_area ?? $inquiry->concerned_area,
-                'product_details'  => $req->product_details ?? $inquiry->product_details,
-                'quantity'         => $req->quantity ?? $inquiry->quantity,
                 'principal_id'     => $req->principal_id ?? $inquiry->principal_id,
                 'status'           => $req->status ?? $inquiry->status,
-                'updated_by'       => Auth::id()
-            ]);
+                'updated_by'       => Auth::id(),
+            ];
 
-            // Audit log
+            // Update every row belonging to this enquiry (parent + all item rows)
+            Inquiry::where('parent_id', $parentId)->update($sharedFields);
+
+            // Update / add / remove item lines if provided
+            if ($req->has('items')) {
+                $existingRows = Inquiry::where('parent_id', $parentId)->get();
+
+                foreach ($req->items as $index => $item) {
+                    if (isset($existingRows[$index])) {
+                        $existingRows[$index]->update([
+                            'item_id'  => $item['item_id'],
+                            'quantity' => $item['quantity'],
+                        ]);
+                    } else {
+                        Inquiry::create(array_merge($sharedFields, [
+                            'parent_id'  => $parentId,
+                            'item_id'    => $item['item_id'],
+                            'quantity'   => $item['quantity'],
+                            'user_id'    => $inquiry->user_id,
+                            'created_by' => Auth::id(),
+                        ]));
+                    }
+                }
+
+                if ($existingRows->count() > count($req->items)) {
+                    $existingRows->slice(count($req->items))
+                        ->each(fn ($row) => $row->delete());
+                }
+            }
+
+            $inquiry->refresh();
+
             saveLog('UPDATE_INQUIRY', 'Inquiry', [
                 'old' => $oldData,
                 'new' => $inquiry
             ]);
+
+            DB::commit();
 
             return response()->json([
                 'status' => 200,
@@ -393,6 +505,7 @@ public function inquiryDetails($parentId)
             ]);
 
         } catch (ValidationException $e) {
+            DB::rollBack();
             return response()->json([
                 'status' => 422,
                 'message' => 'Validation failed',
@@ -400,6 +513,7 @@ public function inquiryDetails($parentId)
             ], 422);
 
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('Inquiry update error: '.$e->getMessage());
             return response()->json([
                 'status' => 500,
