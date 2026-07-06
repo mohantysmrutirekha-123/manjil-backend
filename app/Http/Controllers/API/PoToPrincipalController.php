@@ -40,7 +40,7 @@ class PoToPrincipalController extends Controller
                 'total_qty_ordered_principal'  => 'required|numeric|min:1',
                 'qty_received_principal'       => 'nullable|numeric|min:0',
                 'released_date'                => 'nullable|date',
-                'po_principal_status'          => 'required|in:PENDING,DISPATCH PARTIAL,DISPATCH FULL',
+                'status'          => 'required|in:PENDING,DISPATCH PARTIAL,DISPATCH FULL',
                 'principal_po_document'        => 'nullable|file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120',
             ]);
 
@@ -69,7 +69,7 @@ class PoToPrincipalController extends Controller
                     'pending_qty_principal'        => $pendingQty,
                     'released_date'                => $validated['released_date'] ?? null,
                     'principal_po_document'        => $document,
-                    'po_principal_status'          => $validated['po_principal_status'],
+                    'status'          => $validated['status'],
                     'updated_by'                   => Auth::id(),
                     'updated_at'                   => now(),
                 ]);
@@ -149,7 +149,7 @@ class PoToPrincipalController extends Controller
                     'pending_qty_principal'        => $enquiry->pending_qty_principal,
                     'released_date'                => $enquiry->released_date,
                     'principal_po_document'        => $enquiry->principal_po_document,
-                    'po_principal_status'          => $enquiry->po_principal_status,
+                    'status'          => $enquiry->status,
                     'status'                       => $enquiry->status,
 
                     'items' => $items->map(function ($row) {
@@ -198,7 +198,7 @@ class PoToPrincipalController extends Controller
                 'total_qty_ordered_principal'  => 'required|numeric|min:1',
                 'qty_received_principal'       => 'nullable|numeric|min:0',
                 'released_date'                => 'nullable|date',
-                'po_principal_status'          => 'required|in:PENDING,DISPATCH PARTIAL,DISPATCH FULL',
+                'status'          => 'required|in:PENDING,DISPATCH PARTIAL,DISPATCH FULL',
                 'principal_po_document'        => 'nullable|file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120',
             ]);
 
@@ -229,7 +229,7 @@ class PoToPrincipalController extends Controller
                 'pending_qty_principal'        => $pendingQty,
                 'released_date'                => $validated['released_date'] ?? null,
                 'principal_po_document'        => $document,
-                'po_principal_status'          => $validated['po_principal_status'],
+                'status'          => $validated['status'],
                 'updated_by'                   => Auth::id(),
                 'updated_at'                   => now(),
             ]);

@@ -34,7 +34,7 @@ class SalesInvoiceController extends Controller
                 'gst_percent'         => 'nullable|numeric|min:0',
                 'qty_billed'          => 'required|numeric|min:1',
                 'total_selling_value' => 'required|numeric|min:0',
-                'sales_invoice_status'=> 'required|in:Generated,Issued,Paid',
+                'status'=> 'required|in:Generated,Issued,Paid',
             ]);
 
             $qtyOrderedTotal = (int) $firstInquiry->customer_qty_order;
@@ -49,7 +49,7 @@ class SalesInvoiceController extends Controller
                     'qty_billed'             => $validated['qty_billed'],
                     'total_selling_value'    => $validated['total_selling_value'],
                     'pending_qty_after_bill' => $pendingAfterBill,
-                    'sales_invoice_status'   => $validated['sales_invoice_status'],
+                    'status'   => $validated['status'],
                     'updated_by'             => Auth::id(),
                     'updated_at'             => now(),
                 ]);
@@ -109,7 +109,7 @@ class SalesInvoiceController extends Controller
                     'qty_billed'             => $enquiry->qty_billed,
                     'total_selling_value'    => $enquiry->total_selling_value,
                     'pending_qty_after_bill' => $enquiry->pending_qty_after_bill,
-                    'sales_invoice_status'   => $enquiry->sales_invoice_status,
+                    'status'   => $enquiry->status,
                     'status'                 => $enquiry->status,
 
                     'items' => $items->map(function ($row) {
@@ -148,7 +148,7 @@ class SalesInvoiceController extends Controller
                 'gst_percent'          => 'nullable|numeric|min:0',
                 'qty_billed'           => 'required|numeric|min:1',
                 'total_selling_value'  => 'required|numeric|min:0',
-                'sales_invoice_status' => 'required|in:Generated,Issued,Paid',
+                'status' => 'required|in:Generated,Issued,Paid',
             ]);
 
             $inquiry = Inquiry::findOrFail($id);
@@ -164,7 +164,7 @@ class SalesInvoiceController extends Controller
                 'qty_billed'             => $validated['qty_billed'],
                 'total_selling_value'    => $validated['total_selling_value'],
                 'pending_qty_after_bill' => $pendingAfterBill,
-                'sales_invoice_status'   => $validated['sales_invoice_status'],
+                'status'   => $validated['status'],
                 'updated_by'             => Auth::id(),
                 'updated_at'             => now(),
             ]);
