@@ -297,6 +297,132 @@ public function update(Request $request, $id)
 
 
 
+public function store(Request $request)
+{
+    DB::beginTransaction();
+
+    try {
+
+        $request->validate([
+           
+            'inquiry_id'            => 'required|string|max:20',
+            'inquiry_code'          => 'required|string|max:20',
+            'customer_id'           => 'required|exists:users,id',
+
+            'customer_po_no'        => 'required|string|max:255',
+            'customer_due_date'     => 'required|date',
+            'customer_qty_order'    => 'required|numeric|min:1',
+            'me_ref'                => 'required|string|max:255',
+            'pending_qty'           => 'nullable|numeric|min:0',
+
+            'status' => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
+
+            'customer_pdo_document' => 'nullable|file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120',
+        ]);
+
+        // Parent Inquiry
+        
+
+        // Duplicate Inquiry ID
+        if (Inquiry::where('inquiry_id', $request->inquiry_id)->exists()) {
+
+            return response()->json([
+                'status' => false,
+                'message' => 'Inquiry ID already exists.'
+            ], 422);
+        }
+
+        // Duplicate Inquiry Code
+        if (Inquiry::where('inquiry_code', $request->inquiry_code)->exists()) {
+
+            return response()->json([
+                'status' => false,
+                'message' => 'Inquiry Code already exists.'
+            ], 422);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Upload Customer PO Document
+        |--------------------------------------------------------------------------
+        */
+
+        $document = null;
+
+        if ($request->hasFile('customer_pdo_document')) {
+
+            $file = $request->file('customer_pdo_document');
+
+            $document = time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
+
+            $file->move(public_path('uploads/customer_po_documents'), $document);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Create Record
+        |--------------------------------------------------------------------------
+        */
+
+        $inquiry = Inquiry::create([
+
+            'parent_id'             => 0,
+
+            'inquiry_code'          => $request->inquiry_code,
+            'inquiry_id'            => $request->inquiry_id,
+
+            'enquiry_type'          => 'Customer_PO',
+
+            // Copy from Parent Inquiry
+            'customer_id'           => $request->customer_id,
+          
+
+            'status'                => $request->status,
+
+            'customer_po_no'        => $request->customer_po_no,
+            'customer_due_date'     => $request->customer_due_date,
+            'customer_qty_order'    => $request->customer_qty_order,
+            'me_ref'                => $request->me_ref,
+            'pending_qty'           => $request->pending_qty,
+            'customer_pdo_document' => $document,
+
+            'user_id'               => Auth::id(),
+            'created_by'            => Auth::id(),
+            'updated_by'            => Auth::id(),
+        ]);
+
+        // First record becomes parent
+        $inquiry->update([
+            'parent_id' => $inquiry->id
+        ]);
+
+        DB::commit();
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Customer PO created successfully.',
+            'data' => $inquiry
+        ], 201);
+
+    } catch (ValidationException $e) {
+
+        DB::rollBack();
+
+        return response()->json([
+            'status' => false,
+            'errors' => $e->errors()
+        ], 422);
+
+    } catch (\Exception $e) {
+
+        DB::rollBack();
+
+        return response()->json([
+            'status' => false,
+            'message' => $e->getMessage()
+        ], 500);
+    }
+}
 
 
 

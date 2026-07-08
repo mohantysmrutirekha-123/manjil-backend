@@ -38,7 +38,7 @@ public function convertTocustomerQuotation(Request $request, $id)
             'offer_type'           => 'required|in:Quotation,Budgetary Offer',
             'quantity_quoted'      => 'required|numeric|min:1',
             'validity_period'      => 'required|string|max:100',
-            'principal_quote_date' => 'required|date',
+            'customer_quote_date' => 'required|date',
             'status'               => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
             'items'                => 'required|array|min:1',
             'items.*.id'           => 'required|exists:inquiries,id',
@@ -106,7 +106,7 @@ public function convertTocustomerQuotation(Request $request, $id)
                     'budgetary_no'         => $budgetaryNo,
                     'quantity_quoted'      => $validated['quantity_quoted'],
                     'validity_period'      => $validated['validity_period'],
-                    'principal_quote_date' => $validated['principal_quote_date'],
+                    'customer_quote_date' => $validated['customer_quote_date'],
                     'price'                => $item['price'],
                     'status'               => $validated['status'],
                     'updated_by'           => Auth::id(),
@@ -191,7 +191,7 @@ public function customerquotationList()
                 'customer_name'        => optional($enquiry->customer)->name,
                 'principal_id'         => $enquiry->principal_id,
                 'principal_quote_no'   => $enquiry->principal_quote_no,
-                'principal_quote_date' => $enquiry->principal_quote_date,
+                'customer_quote_date' => $enquiry->customer_quote_date,
                 'offer_type'         => $enquiry->offer_type,
                 'quantity_quoted'    => $enquiry->quantity_quoted,
                 'validity_period'    => $enquiry->validity_period,
@@ -259,7 +259,7 @@ public function update(Request $request, $id)
             'offer_type'   => $request->offer_type,
             'quantity_quoted'    => $request->quantity_quoted,
             'validity_period'    => $request->validity_period,
-            'principal_quote_date' => $request->principal_quote_date,
+            'customer_quote_date' => $request->customer_quote_date,
           
             'status'               => $request->status,
             'updated_by'           => Auth::id(),
@@ -289,5 +289,183 @@ public function update(Request $request, $id)
     }
 }
 
+
+
+
+
+
+
+public function store(Request $request)
+{
+    DB::beginTransaction();
+
+    try {
+
+        $request->validate([
+           
+            'inquiry_id'           => 'required|string|max:20',
+            'inquiry_code'         => 'required|string|max:20',
+
+            'customer_quote_date'  => 'required|date',
+            'customer_id'          => 'required|exists:users,id',
+
+            'status'               => 'required',
+            'offer_type'           => 'required|in:Quotation,Budgetary Offer',
+            'quantity_quoted'      => 'required|numeric|min:1',
+            'validity_period'      => 'required|string|max:100',
+            'offered_value'        => 'required|numeric|min:0',
+
+            'items'                => 'required|array|min:1',
+            'items.*.item_id'      => 'required|exists:items,id',
+            'items.*.quantity'     => 'required|integer|min:1',
+            'items.*.price'        => 'required|numeric|min:0',
+        ]);
+
+        // Parent Inquiry
+        
+
+        // Duplicate Inquiry ID
+        if (Inquiry::where('inquiry_id', $request->inquiry_id)->exists()) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Inquiry ID already exists.'
+            ],422);
+        }
+
+        // Duplicate Inquiry Code
+        if (Inquiry::where('inquiry_code', $request->inquiry_code)->exists()) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Inquiry Code already exists.'
+            ],422);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Generate Quotation/Budgetary Number
+        |--------------------------------------------------------------------------
+        */
+
+        $quotationNo = null;
+        $budgetaryNo = null;
+
+        if ($request->offer_type == 'Quotation') {
+
+            $lastQuotation = Inquiry::whereNotNull('quotation_no')
+                ->orderByDesc('id')
+                ->first();
+
+            if ($lastQuotation && !empty($lastQuotation->quotation_no)) {
+
+                $lastNo = (int) preg_replace('/[^0-9]/', '', $lastQuotation->quotation_no);
+
+                $quotationNo = 'QN-' . str_pad($lastNo + 1, 6, '0', STR_PAD_LEFT);
+
+            } else {
+
+                $quotationNo = 'QN-000001';
+            }
+
+        } else {
+
+            $lastBudgetary = Inquiry::whereNotNull('budgetary_no')
+                ->orderByDesc('id')
+                ->first();
+
+            if ($lastBudgetary && !empty($lastBudgetary->budgetary_no)) {
+
+                $lastNo = (int) preg_replace('/[^0-9]/', '', $lastBudgetary->budgetary_no);
+
+                $budgetaryNo = 'BO-' . str_pad($lastNo + 1, 6, '0', STR_PAD_LEFT);
+
+            } else {
+
+                $budgetaryNo = 'BO-000001';
+            }
+        }
+
+        $newParentId = null;
+
+        foreach ($request->items as $index => $item) {
+
+            $inquiry = Inquiry::create([
+
+                'parent_id'            => 0,
+
+                'inquiry_code'         => $request->inquiry_code,
+                'inquiry_id'           => $request->inquiry_id,
+
+                'enquiry_type'         => 'customer_quotation',
+
+                'customer_id'          => $request->customer_id,
+
+                'item_id'              => $item['item_id'],
+
+                // Copy from parent inquiry
+                
+
+                'quantity'             => $item['quantity'],
+                'price'                => $item['price'],
+
+                'status'               => $request->status,
+
+                'customer_quote_date'  => $request->customer_quote_date,
+                'offer_type'           => $request->offer_type,
+                'quantity_quoted'      => $request->quantity_quoted,
+                'validity_period'      => $request->validity_period,
+                'offered_value'        => $request->offered_value,
+
+                'quotation_no'         => $quotationNo,
+                'budgetary_no'         => $budgetaryNo,
+
+                'user_id'              => Auth::id(),
+                'created_by'           => Auth::id(),
+                'updated_by'           => Auth::id(),
+            ]);
+
+            if ($index == 0) {
+
+                $newParentId = $inquiry->id;
+
+                $inquiry->update([
+                    'parent_id' => $newParentId
+                ]);
+
+            } else {
+
+                $inquiry->update([
+                    'parent_id' => $newParentId
+                ]);
+            }
+        }
+
+        DB::commit();
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Customer quotation created successfully.',
+            'quotation_no' => $quotationNo,
+            'budgetary_no' => $budgetaryNo
+        ],201);
+
+    } catch (ValidationException $e) {
+
+        DB::rollBack();
+
+        return response()->json([
+            'status' => false,
+            'errors' => $e->errors()
+        ],422);
+
+    } catch (\Exception $e) {
+
+        DB::rollBack();
+
+        return response()->json([
+            'status' => false,
+            'message' => $e->getMessage()
+        ],500);
+    }
+}
 
 }

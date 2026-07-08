@@ -248,5 +248,168 @@ public function update(Request $request, $id)
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+public function store(Request $request)
+{
+    DB::beginTransaction();
+
+    try {
+
+        $request->validate([
+           
+            'inquiry_id'           => 'required|string|max:20',
+            'inquiry_code'         => 'required|string|max:20',
+
+            'status'               => 'required',
+            'offer_type'           => 'required|in:Quotation,Budgetary Offer',
+
+            'negotiation_details'  => 'required|string',
+            'follow_notes'         => 'required|string',
+            'discussion_dates'     => 'required|date',
+            'revised_value'        => 'nullable|numeric|min:0',
+        ]);
+
+        // Check Parent Inquiry
+      
+
+        // Duplicate Inquiry ID
+        if (Inquiry::where('inquiry_id', $request->inquiry_id)->exists()) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Inquiry ID already exists.'
+            ], 422);
+        }
+
+        // Duplicate Inquiry Code
+        if (Inquiry::where('inquiry_code', $request->inquiry_code)->exists()) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Inquiry Code already exists.'
+            ], 422);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Generate Quotation/Budgetary Number
+        |--------------------------------------------------------------------------
+        */
+
+        $quotationNo = null;
+        $budgetaryNo = null;
+
+        if ($request->offer_type == 'Quotation') {
+
+            $lastQuotation = Inquiry::whereNotNull('quotation_no')
+                ->orderByDesc('id')
+                ->first();
+
+            if ($lastQuotation && $lastQuotation->quotation_no) {
+
+                $lastNo = (int) preg_replace('/[^0-9]/', '', $lastQuotation->quotation_no);
+                $quotationNo = 'QN-' . str_pad($lastNo + 1, 6, '0', STR_PAD_LEFT);
+
+            } else {
+
+                $quotationNo = 'QN-000001';
+            }
+
+        } else {
+
+            $lastBudgetary = Inquiry::whereNotNull('budgetary_no')
+                ->orderByDesc('id')
+                ->first();
+
+            if ($lastBudgetary && $lastBudgetary->budgetary_no) {
+
+                $lastNo = (int) preg_replace('/[^0-9]/', '', $lastBudgetary->budgetary_no);
+                $budgetaryNo = 'BO-' . str_pad($lastNo + 1, 6, '0', STR_PAD_LEFT);
+
+            } else {
+
+                $budgetaryNo = 'BO-000001';
+            }
+        }
+
+        // Insert Single Record
+        $inquiry = Inquiry::create([
+
+            'parent_id'            => 0,
+
+            'inquiry_code'         => $request->inquiry_code,
+            'inquiry_id'           => $request->inquiry_id,
+
+            'enquiry_type'         => 'Negotiation',
+
+            // Copy from Parent Inquiry
+          
+
+            'status'               => $request->status,
+
+            'offer_type'           => $request->offer_type,
+            'negotiation_details'  => $request->negotiation_details,
+            'follow_notes'         => $request->follow_notes,
+            'discussion_dates'     => $request->discussion_dates,
+            'revised_value'        => $request->revised_value,
+
+            'quotation_no'         => $quotationNo,
+            'budgetary_no'         => $budgetaryNo,
+
+            'user_id'              => Auth::id(),
+            'created_by'           => Auth::id(),
+            'updated_by'           => Auth::id(),
+        ]);
+
+        // Set parent_id = own id
+        $inquiry->update([
+            'parent_id' => $inquiry->id
+        ]);
+
+        DB::commit();
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Negotiation created successfully.',
+            'quotation_no' => $quotationNo,
+            'budgetary_no' => $budgetaryNo,
+            'data' => $inquiry
+        ], 201);
+
+    } catch (ValidationException $e) {
+
+        DB::rollBack();
+
+        return response()->json([
+            'status' => false,
+            'errors' => $e->errors()
+        ], 422);
+
+    } catch (\Exception $e) {
+
+        DB::rollBack();
+
+        return response()->json([
+            'status' => false,
+            'message' => $e->getMessage()
+        ], 500);
+    }
+}
+
     
 }

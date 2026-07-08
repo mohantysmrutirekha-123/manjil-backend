@@ -134,6 +134,127 @@ public function update(Request $request, $id)
     }
 }
 
+
+
+
+public function store(Request $request)
+{
+    try {
+
+        $request->validate([
+           
+            'inquiry_id'             => 'required|string|max:20',
+            'inquiry_code'           => 'required|string|max:20',
+            'principal_quote_no'     => 'required|integer',
+            'principal_quote_date'   => 'required|date',
+            'customer_id'            => 'required|exists:users,id',
+            'principal_id'           => 'required|exists:users,id',
+            'status'                 => 'required',
+           
+
+            'items'                  => 'required|array|min:1',
+            'items.*.item_id'        => 'required|exists:items,id',
+            'items.*.quantity'       => 'required|integer|min:1',
+            'items.*.price'          => 'required|numeric|min:0',
+        ]);
+
+        DB::beginTransaction();
+
+        // Get original inquiry
+        
+        // Check duplicate Inquiry ID
+        if (Inquiry::where('inquiry_id', $request->inquiry_id)->exists()) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Inquiry ID already exists.'
+            ], 422);
+        }
+
+        // Check duplicate Inquiry Code
+        if (Inquiry::where('inquiry_code', $request->inquiry_code)->exists()) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Inquiry Code already exists.'
+            ], 422);
+        }
+
+        $newParentId = null;
+
+        foreach ($request->items as $index => $item) {
+
+            $inquiry = Inquiry::create([
+
+                'parent_id'             => 0,
+
+                'inquiry_code'          => $request->inquiry_code,
+                'inquiry_id'            => $request->inquiry_id,
+
+                'enquiry_type'          => 'principal_quotation',
+
+                'customer_id'           => $request->customer_id,
+
+                'item_id'               => $item['item_id'],
+
+               
+
+                'quantity'              => $item['quantity'],
+
+                'principal_id'          => $request->principal_id,
+
+                'principal_quote_no'    => $request->principal_quote_no,
+                'principal_quote_date'  => $request->principal_quote_date,
+
+                'price'                 => $item['price'],
+
+                'status'                => $request->status,
+
+                'user_id'               => Auth::id(),
+                'created_by'            => Auth::id(),
+                'updated_by'            => Auth::id(),
+            ]);
+
+            if ($index == 0) {
+
+                $newParentId = $inquiry->id;
+
+                $inquiry->update([
+                    'parent_id' => $newParentId
+                ]);
+
+            } else {
+
+                $inquiry->update([
+                    'parent_id' => $newParentId
+                ]);
+            }
+        }
+
+        DB::commit();
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Principal quotation created successfully.'
+        ], 201);
+
+    } catch (ValidationException $e) {
+
+        DB::rollBack();
+
+        return response()->json([
+            'status' => false,
+            'errors' => $e->errors()
+        ], 422);
+
+    } catch (\Exception $e) {
+
+        DB::rollBack();
+
+        return response()->json([
+            'status' => false,
+            'message' => $e->getMessage()
+        ], 500);
+    }
+}
   
 
 }

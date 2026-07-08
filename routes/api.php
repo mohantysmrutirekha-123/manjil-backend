@@ -105,6 +105,7 @@ Route::middleware('auth:sanctum')->group(function () {
   Route::post('/principal-quotation/{id}', [PrincipalQuoteController::class, 'update']);
 
 
+
   Route::post('/convertTocustomerQuotation/{id}',[CustomerQuoteController::class, 'convertTocustomerQuotation']);
 
   Route::get('/customerquotationList', [CustomerQuoteController::class, 'customerquotationList']);
@@ -135,5 +136,19 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/convertTosalesinvoice/{id}', [SalesInvoiceController::class, 'convertTosalesinvoice']);
     Route::get('/sellinvoiceList', [SalesInvoiceController::class, 'sellinvoiceList']);
     Route::post('/sales-invoice/{id}', [SalesInvoiceController::class, 'update']);
+
+
+
+
+
+
+
+      Route::post('/principal-quotation', [PrincipalQuoteController::class, 'store']);
+      Route::post('/customer-quotation', [CustomerQuoteController::class, 'store']);
+       Route::post('/negotiation-quotation', [NegotiationController::class, 'store']);
+        Route::post('/customer-po', [CustomerPoController::class, 'store']);
+          Route::post('/po-to-principal', [PoToPrincipalController::class, 'store']);
+
+
 });
 
