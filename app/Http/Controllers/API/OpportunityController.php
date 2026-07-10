@@ -823,4 +823,110 @@ if ($req->has('items') && is_string($req->items)) {
             ], 500);
         }
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+public function convertOpportunityToPrincipalQuotation(Request $request, $id)
+{
+    DB::beginTransaction();
+
+    try {
+
+        $firstInquiry = Inquiry::find($id);
+
+        if (!$firstInquiry) {
+            return response()->json([
+                'status' => 404,
+                'message' => 'Inquiry not found.'
+            ], 404);
+        }
+
+        if ($firstInquiry->user_id != Auth::id() && Auth::user()->role != 'admin') {
+            return response()->json([
+                'status' => 403,
+                'message' => 'Unauthorized.'
+            ], 403);
+        }
+
+        $validated = $request->validate([
+            'principal_quote_no'   => 'required|string|max:255',
+            'principal_quote_date' => 'required|date',
+            'customer_id'          => 'required|exists:users,id',
+            'principal_id'         => 'nullable|exists:users,id',
+            'status'               => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
+            'items'                => 'required|array|min:1',
+            'items.*.id'           => 'required|exists:inquiries,id',
+            'items.*.price'        => 'required|numeric|min:0'
+        ]);
+
+        foreach ($validated['items'] as $item) {
+
+            Inquiry::where('id', $item['id'])->update([
+                'enquiry_type'         => 'principal_quotation',
+                'principal_quote_no'   => $validated['principal_quote_no'],
+                'principal_quote_date' => $validated['principal_quote_date'],
+                'customer_id'          => $validated['customer_id'],
+                'principal_id'         => $validated['principal_id'],
+                'price'                => $item['price'],
+                'status'               => $validated['status'],
+                'updated_by'           => Auth::id(),
+            ]);
+        }
+
+        DB::commit();
+
+        return response()->json([
+            'status' => 200,
+            'message' => 'Principal quotation converted successfully.'
+        ], 200);
+
+    } catch (ValidationException $e) {
+
+        DB::rollBack();
+
+        return response()->json([
+            'status' => 422,
+            'errors' => $e->errors()
+        ], 422);
+
+    } catch (\Exception $e) {
+
+        DB::rollBack();
+
+        Log::error($e->getMessage());
+
+        return response()->json([
+            'status' => 500,
+            'message' => $e->getMessage()
+        ], 500);
+    }
+
+}
+
+
 }

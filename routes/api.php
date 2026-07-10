@@ -139,7 +139,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
 
 
-
+  Route::post('/opportunity/{id}/convert-principal-quotation',[OpportunityController::class, 'convertOpportunityToPrincipalQuotation']);
 
 
 
