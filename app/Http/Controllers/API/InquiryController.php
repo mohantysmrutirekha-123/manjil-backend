@@ -315,8 +315,11 @@ public function inquiryDetails($parentId)
     $data->getCollection()->transform(function ($parent) {
 
         // load child items (inquiry lines)
+        // $children = Inquiry::with('item:id,name,mat_code,part_model_no,description')
+        //     ->where('parent_id', $parent->id)
+        //     ->get();
         $children = Inquiry::with('item:id,name,mat_code,part_model_no,description')
-            ->where('parent_id', $parent->id)
+            ->where('inquiry_code', $parent->inquiry_code)
             ->get();
 
         $parent->setAttribute('items', $children);
