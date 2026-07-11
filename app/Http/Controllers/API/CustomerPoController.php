@@ -35,17 +35,29 @@ public function convertTocustomerpo(Request $request, $id)
             ], 403);
         }
 
-        $validated = $request->validate([
-            'customer_po_no'        => 'required|string|max:255',
-            'customer_due_date'     => 'required|date',
-            'customer_qty_order'    => 'required|numeric|min:1',
-            'me_ref'                => 'required|string|max:255',
-            'pending_qty'           => 'nullable|numeric|min:0',
-            'status'                => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
+        // $validated = $request->validate([
+        //     'customer_po_no'        => 'required|string|max:255',
+        //     'customer_due_date'     => 'required|date',
+        //     'customer_qty_order'    => 'required|numeric|min:1',
+        //     'me_ref'                => 'required|string|max:255',
+        //     'pending_qty'           => 'nullable|numeric|min:0',
+        //     'status'                => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
 
-            'customer_pdo_document' => 'nullable|file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120',
+        //     'customer_pdo_document' => 'nullable|file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120',
 
            
+        // ]);
+
+        $validated = $request->validate([
+        'customer_po_no'        => 'required|string|max:255',
+        'customer_due_date'     => 'required|date',
+        'customer_qty_order'    => 'required|numeric|min:1',
+        'me_ref'                => 'required|string|max:255',
+        'pending_qty'           => 'nullable|numeric|min:0',
+        'status'                => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
+        'customer_pdo_document' => 'nullable|file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120',
+        'item_ids'               => 'required|array|min:1',
+        'item_ids.*'             => 'required|exists:inquiries,id',
         ]);
 
         /*
@@ -72,20 +84,51 @@ public function convertTocustomerpo(Request $request, $id)
         */
 
         
+        // -----------------------Original --------------
 
-            Inquiry::where('inquiry_code', $firstInquiry->inquiry_code)
-                ->update([
-                    'enquiry_type'         => 'Customer_PO',
-                    'customer_po_no'       => $validated['customer_po_no'],
-                    'customer_due_date'    => $validated['customer_due_date'],
-                    'customer_qty_order'   => $validated['customer_qty_order'],
-                    'me_ref'               => $validated['me_ref'],
-                    'pending_qty'          => $validated['pending_qty'] ?? null,
-                    'customer_pdo_document'=> $document,
-                    'status'               => $validated['status'],
-                    'updated_by'           => Auth::id(),
-                    'updated_at'           => now(),
-                ]);
+            // Inquiry::where('inquiry_code', $firstInquiry->inquiry_code)
+            //     ->update([
+            //         'enquiry_type'         => 'Customer_PO',
+            //         'customer_po_no'       => $validated['customer_po_no'],
+            //         'customer_due_date'    => $validated['customer_due_date'],
+            //         'customer_qty_order'   => $validated['customer_qty_order'],
+            //         'me_ref'               => $validated['me_ref'],
+            //         'pending_qty'          => $validated['pending_qty'] ?? null,
+            //         'customer_pdo_document'=> $document,
+            //         'status'               => $validated['status'],
+            //         'updated_by'           => Auth::id(),
+            //         'updated_at'           => now(),
+            //     ]);
+
+            // Inquiry::whereIn('id', $validated['item_ids'])
+            // ->where('inquiry_code', $firstInquiry->inquiry_code)
+            // ->update([
+            //     'enquiry_type'         => 'Customer_PO',
+            //     'customer_po_no'       => $validated['customer_po_no'],
+            //     'customer_due_date'    => $validated['customer_due_date'],
+            //     'customer_qty_order'   => $validated['customer_qty_order'],
+            //     'me_ref'               => $validated['me_ref'],
+            //     'pending_qty'          => $validated['pending_qty'] ?? null,
+            //     'customer_pdo_document'=> $document,
+            //     'status'               => $validated['status'],
+            //     'updated_by'           => Auth::id(),
+            //     'updated_at'           => now(),
+            // ]);
+
+            Inquiry::whereIn('id', $validated['item_ids'])
+            ->where('inquiry_code', $firstInquiry->inquiry_code)
+            ->update([
+                'enquiry_type'          => 'Customer_PO',
+                'customer_po_no'        => $validated['customer_po_no'],
+                'customer_due_date'     => $validated['customer_due_date'],
+                'customer_qty_order'    => $validated['customer_qty_order'],
+                'me_ref'                => $validated['me_ref'],
+                'pending_qty'           => $validated['pending_qty'] ?? null,
+                'customer_pdo_document' => $document,
+                'status'                => $validated['status'],
+                'updated_by'            => Auth::id(),
+                'updated_at'            => now(),
+            ]);
         
 
         DB::commit();

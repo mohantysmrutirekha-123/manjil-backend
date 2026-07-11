@@ -139,16 +139,15 @@ Route::middleware('auth:sanctum')->group(function () {
 
 
 
-  Route::post('/opportunity/{id}/convert-principal-quotation',[OpportunityController::class, 'convertOpportunityToPrincipalQuotation']);
+    Route::post('/opportunity/{id}/convert-principal-quotation',[OpportunityController::class, 'convertOpportunityToPrincipalQuotation']);
 
 
 
-      Route::post('/principal-quotation', [PrincipalQuoteController::class, 'store']);
-      Route::post('/customer-quotation', [CustomerQuoteController::class, 'store']);
-       Route::post('/negotiation-quotation', [NegotiationController::class, 'store']);
-        Route::post('/customer-po', [CustomerPoController::class, 'store']);
-          Route::post('/po-to-principal', [PoToPrincipalController::class, 'store']);
+    Route::post('/principal-quotation', [PrincipalQuoteController::class, 'store']);
+    Route::post('/customer-quotation', [CustomerQuoteController::class, 'store']);
+    Route::post('/negotiation-quotation', [NegotiationController::class, 'store']);
+    Route::post('/customer-po', [CustomerPoController::class, 'store']);
+    Route::post('/po-to-principal', [PoToPrincipalController::class, 'store']);
 
 
 });
-

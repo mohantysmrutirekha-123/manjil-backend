@@ -100,7 +100,8 @@ public function store(Request $req)
             'date'             => 'required|date',
             'items'            => 'required|array|min:1',
             'items.*.item_id'  => 'required|exists:items,id',
-            'items.*.quantity' => 'required|integer|min:1'
+            'items.*.quantity' => 'required|integer|min:1',
+            'items.*.date'     => 'nullable|date',
         ]);
 
         $last = Inquiry::orderBy('id', 'desc')->first();
@@ -119,7 +120,7 @@ public function store(Request $req)
                 'parent_id'        => null,
                 'inquiry_id'     => $req->inquiry_id,
                 'inquiry_code'     => $inquiryCode,
-                'inquiry_date'     => $req->date,
+                'inquiry_date'     => $item['date'] ?? $req->date,
 
                 'enquiry_type'     => $req->enquiry_type,
                 'customer_id'      => $req->customer_id,
@@ -440,6 +441,7 @@ public function inquiryDetails($parentId)
                 'items'             => 'sometimes|array|min:1',
                 'items.*.item_id'   => 'required_with:items|exists:items,id',
                 'items.*.quantity'  => 'required_with:items|integer|min:1',
+                'items.*.date'      => 'nullable|date',
             ]);
 
             $oldData = $inquiry->toArray();
@@ -471,12 +473,14 @@ public function inquiryDetails($parentId)
                         $existingRows[$index]->update([
                             'item_id'  => $item['item_id'],
                             'quantity' => $item['quantity'],
+                            'inquiry_date' => $item['date'] ?? $existingRows[$index]->inquiry_date,
                         ]);
                     } else {
                         Inquiry::create(array_merge($sharedFields, [
                             'parent_id'  => $parentId,
                             'item_id'    => $item['item_id'],
                             'quantity'   => $item['quantity'],
+                            'inquiry_date' => $item['date'] ?? $sharedFields['inquiry_date'],
                             'user_id'    => $inquiry->user_id,
                             'created_by' => Auth::id(),
                         ]));

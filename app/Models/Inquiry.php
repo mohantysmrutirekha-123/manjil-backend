@@ -91,6 +91,7 @@ class Inquiry extends Model
         'price',
         'principal_quote_no',
         'principal_quote_date',
+        'customer_quote_date',
         'quotation_no',
         'budgetary_no',
         'negotiation_details',

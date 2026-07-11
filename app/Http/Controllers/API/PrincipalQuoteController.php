@@ -15,13 +15,29 @@ class PrincipalQuoteController extends Controller
     try {
 
         // Parent enquiries only
+        // $enquiries = Inquiry::with([
+        //     'customer:id,name',
+        //     'item:id,name,mat_code,part_model_no,description'
+        // ])
+        // ->whereColumn('id', 'parent_id')
+        // //   ->where('enquiry_type', 'principal_quotation')
+        // ->whereIn('enquiry_type', ['principal_quotation', 'customer_quotation', 'Customer_PO', 'Negotiation','Customer_PO', 'PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'])
+        // ->latest()
+        // ->get();
+
+        $stages = ['principal_quotation', 'customer_quotation', 'Customer_PO', 'Negotiation', 'PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'];
+
         $enquiries = Inquiry::with([
             'customer:id,name',
             'item:id,name,mat_code,part_model_no,description'
         ])
         ->whereColumn('id', 'parent_id')
-        //   ->where('enquiry_type', 'principal_quotation')
-        ->whereIn('enquiry_type', ['principal_quotation', 'customer_quotation', 'Customer_PO', 'Negotiation','Customer_PO', 'PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'])
+        ->where(function ($q) use ($stages) {
+            $q->whereIn('enquiry_type', $stages)
+            ->orWhereHas('children', function ($cq) use ($stages) {
+                $cq->whereIn('enquiry_type', $stages);
+            });
+        })
         ->latest()
         ->get();
 
