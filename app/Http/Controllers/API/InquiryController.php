@@ -610,34 +610,67 @@ public function convertToprincipalqutation(Request $request, $id)
             'principal_quote_no'   => 'required|string|max:255',
             'principal_quote_date' => 'required|date',
             'status'               => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
-            'items'                => 'required|array',
+            'items'                => 'required|array|min:1',
             'items.*.id'           => 'required|exists:inquiries,id',
-            'items.*.price'        => 'required|numeric'
+            'items.*.price'        => 'required|numeric|min:0',
         ]);
 
-        // Get latest parent_id
-        $latestParentId = Inquiry::max('parent_id');
-        $newParentId = ($latestParentId ?? 0) + 1;
+        // Selected IDs
+        $selectedIds = collect($validated['items'])->pluck('id')->toArray();
 
+        // Current parent_id
+        $currentParentId = $firstInquiry->parent_id;
+
+        if (!empty($currentParentId)) {
+
+            // Total items in current parent
+            $totalItems = Inquiry::where('parent_id', $currentParentId)->count();
+
+            // Selected items from current parent
+            $selectedCount = Inquiry::where('parent_id', $currentParentId)
+                ->whereIn('id', $selectedIds)
+                ->count();
+
+            // If all items selected, keep same parent_id
+            if ($totalItems == $selectedCount) {
+
+                $newParentId = $currentParentId;
+
+            } else {
+
+                // Generate new parent_id
+                $latestParentId = Inquiry::max('parent_id');
+                $newParentId = ($latestParentId ?? 0) + 1;
+            }
+
+        } else {
+
+            // No parent_id yet
+            $latestParentId = Inquiry::max('parent_id');
+            $newParentId = ($latestParentId ?? 0) + 1;
+        }
+
+        // Update only selected items
         foreach ($validated['items'] as $item) {
 
-            Inquiry::where('id', $item['id'])
-                ->update([
-                    'enquiry_type'         => 'principal_quotation',
-                    'principal_quote_no'   => $validated['principal_quote_no'],
-                    'principal_quote_date' => $validated['principal_quote_date'],
-                    'price'                => $item['price'],
-                    'status'               => $validated['status'],
-                    'parent_id'            => $newParentId,
-                    'updated_by'           => Auth::id(),
-                ]);
+            Inquiry::where('id', $item['id'])->update([
+                'parent_id'            => $newParentId,
+                'enquiry_type'         => 'principal_quotation',
+                'principal_quote_no'   => $validated['principal_quote_no'],
+                'principal_quote_date' => $validated['principal_quote_date'],
+                'price'                => $item['price'],
+                'status'               => $validated['status'],
+                'updated_by'           => Auth::id(),
+                'updated_at'           => now(),
+            ]);
         }
 
         DB::commit();
 
         return response()->json([
             'status' => 200,
-            'message' => 'Principal quotation converted successfully.'
+            'message' => 'Principal quotation converted successfully.',
+            'parent_id' => $newParentId
         ]);
 
     } catch (ValidationException $e) {
