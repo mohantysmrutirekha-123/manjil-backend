@@ -583,6 +583,8 @@ public function inquiryDetails($parentId)
 
 public function convertToprincipalqutation(Request $request, $id)
 {
+    DB::beginTransaction();
+
     try {
 
         $firstInquiry = Inquiry::find($id);
@@ -610,19 +612,25 @@ public function convertToprincipalqutation(Request $request, $id)
             'items.*.price'        => 'required|numeric'
         ]);
 
+        // Get latest parent_id
+        $latestParentId = Inquiry::max('parent_id');
+        $newParentId = ($latestParentId ?? 0) + 1;
+
         foreach ($validated['items'] as $item) {
 
             Inquiry::where('id', $item['id'])
-                ->where('inquiry_code', $firstInquiry->inquiry_code)
                 ->update([
                     'enquiry_type'         => 'principal_quotation',
                     'principal_quote_no'   => $validated['principal_quote_no'],
                     'principal_quote_date' => $validated['principal_quote_date'],
                     'price'                => $item['price'],
                     'status'               => $validated['status'],
+                    'parent_id'            => $newParentId,
                     'updated_by'           => Auth::id(),
                 ]);
         }
+
+        DB::commit();
 
         return response()->json([
             'status' => 200,
@@ -631,12 +639,16 @@ public function convertToprincipalqutation(Request $request, $id)
 
     } catch (ValidationException $e) {
 
+        DB::rollBack();
+
         return response()->json([
             'status' => 422,
             'errors' => $e->errors()
         ], 422);
 
     } catch (\Exception $e) {
+
+        DB::rollBack();
 
         Log::error($e->getMessage());
 
