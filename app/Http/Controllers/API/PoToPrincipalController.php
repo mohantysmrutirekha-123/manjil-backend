@@ -40,7 +40,7 @@ class PoToPrincipalController extends Controller
                 'total_qty_ordered_principal'  => 'required|numeric|min:1',
                 'qty_received_principal'       => 'nullable|numeric|min:0',
                 'released_date'                => 'nullable|date',
-                'status'          => 'required|in:PENDING,DISPATCH PARTIAL,DISPATCH FULL',
+                'po_principal_status'          => 'required|in:PENDING,DISPATCH PARTIAL,DISPATCH FULL',
                 'principal_po_document'        => 'nullable|file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120',
             ]);
 
@@ -69,7 +69,7 @@ class PoToPrincipalController extends Controller
                     'pending_qty_principal'        => $pendingQty,
                     'released_date'                => $validated['released_date'] ?? null,
                     'principal_po_document'        => $document,
-                    'status'          => $validated['status'],
+                    'po_principal_status'          => $validated['po_principal_status'],
                     'updated_by'                   => Auth::id(),
                     'updated_at'                   => now(),
                 ]);
@@ -149,8 +149,8 @@ class PoToPrincipalController extends Controller
                     'pending_qty_principal'        => $enquiry->pending_qty_principal,
                     'released_date'                => $enquiry->released_date,
                     'principal_po_document'        => $enquiry->principal_po_document,
-                    'status'          => $enquiry->status,
-                    'status'                       => $enquiry->status,
+                    'po_principal_status'          => $enquiry->po_principal_status,
+                    
 
                     'items' => $items->map(function ($row) {
 
@@ -163,7 +163,7 @@ class PoToPrincipalController extends Controller
                             'part_model_no' => optional($row->item)->part_model_no,
                             'quantity'      => $row->quantity,
                             'price'         => $row->price,
-                            'status'        => $row->status,
+                            'po_principal_status'        => $row->po_principal_status,
                             'date'          => optional($row->created_at)->format('Y-m-d'),
                         ];
 
@@ -198,7 +198,7 @@ class PoToPrincipalController extends Controller
                 'total_qty_ordered_principal'  => 'required|numeric|min:1',
                 'qty_received_principal'       => 'nullable|numeric|min:0',
                 'released_date'                => 'nullable|date',
-                'status'          => 'required|in:PENDING,DISPATCH PARTIAL,DISPATCH FULL',
+                'po_principal_status'          => 'required|in:PENDING,DISPATCH PARTIAL,DISPATCH FULL',
                 'principal_po_document'        => 'nullable|file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120',
             ]);
 
@@ -229,7 +229,7 @@ class PoToPrincipalController extends Controller
                 'pending_qty_principal'        => $pendingQty,
                 'released_date'                => $validated['released_date'] ?? null,
                 'principal_po_document'        => $document,
-                'status'          => $validated['status'],
+                'po_principal_status'          => $validated['po_principal_status'],
                 'updated_by'                   => Auth::id(),
                 'updated_at'                   => now(),
             ]);
@@ -309,7 +309,7 @@ public function store(Request $request)
             'qty_received_principal'        => 'nullable|numeric|min:0',
             'released_date'                 => 'nullable|date',
 
-            'status' => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
+            'po_principal_status' => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
 
             'principal_po_document' => 'nullable|file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120',
         ]);
@@ -322,7 +322,7 @@ public function store(Request $request)
 
         if (Inquiry::where('inquiry_id', $validated['inquiry_id'])->exists()) {
             return response()->json([
-                'status' => false,
+                'po_principal_status' => false,
                 'message' => 'Inquiry ID already exists.'
             ], 422);
         }
@@ -335,7 +335,7 @@ public function store(Request $request)
 
         if (Inquiry::where('inquiry_code', $validated['inquiry_code'])->exists()) {
             return response()->json([
-                'status' => false,
+                'po_principal_status' => false,
                 'message' => 'Inquiry Code already exists.'
             ], 422);
         }
@@ -389,7 +389,7 @@ public function store(Request $request)
 
             'principal_id' => $validated['principal_id'],
 
-            'status' => $validated['status'],
+            'po_principal_status' => $validated['po_principal_status'],
 
             'po_principal_no' => $validated['po_principal_no'],
 
@@ -420,7 +420,7 @@ public function store(Request $request)
         DB::commit();
 
         return response()->json([
-            'status' => true,
+            'po_principal_status' => true,
             'message' => 'Principal PO created successfully.',
             'data' => $inquiry
         ], 201);
@@ -430,7 +430,7 @@ public function store(Request $request)
         DB::rollBack();
 
         return response()->json([
-            'status' => false,
+            'po_principal_status' => false,
             'errors' => $e->errors()
         ], 422);
 
@@ -439,7 +439,7 @@ public function store(Request $request)
         DB::rollBack();
 
         return response()->json([
-            'status' => false,
+            'po_principal_status' => false,
             'message' => $e->getMessage()
         ], 500);
     }
