@@ -16,39 +16,37 @@ use Illuminate\Support\Facades\DB;
 class OpportunityController extends Controller
 {
 
-    public function store(Request $req)
+     public function store(Request $req)
 {
     DB::beginTransaction();
 
     try {
 
-    // Convert form-data JSON string into array
-if ($req->has('items') && is_string($req->items)) {
-    $decoded = json_decode($req->items, true);
+        // Convert JSON string to array
+        if ($req->has('items') && is_string($req->items)) {
+            $decoded = json_decode($req->items, true);
 
-    if (json_last_error() !== JSON_ERROR_NONE) {
-        return response()->json([
-            'status' => 422,
-            'message' => 'Invalid items JSON.',
-            'error' => json_last_error_msg(),
-        ], 422);
-    }
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                return response()->json([
+                    'status' => 422,
+                    'message' => 'Invalid items JSON.',
+                    'error' => json_last_error_msg(),
+                ], 422);
+            }
 
-    $req->merge([
-        'items' => $decoded
-    ]);
-}
+            $req->merge([
+                'items' => $decoded
+            ]);
+        }
 
+        // Validation
         $req->validate([
             'customer_id'      => 'required|exists:users,id',
             'principal_id'     => 'nullable|exists:users,id',
             'quotation_ref'    => 'nullable|string|max:255',
             'details'          => 'nullable|string',
-
-            // File Validation
             'attachment'       => 'nullable|file|mimes:jpg,jpeg,png,pdf,doc,docx,xls,xlsx|max:5120',
-
-            'status'           => 'required|in:Open,In Progress,Converted,Lost',
+            'status'           => 'nullable|in:Open,In Progress,Converted,Lost',
             'opportunity_date' => 'nullable|date',
 
             'items'                  => 'nullable|array',
@@ -60,12 +58,7 @@ if ($req->has('items') && is_string($req->items)) {
             'items.*.status'         => 'nullable|in:Pending,Quotation Placed,Completed',
         ]);
 
-        /*
-        |--------------------------------------------------------------------------
-        | Upload Attachment
-        |--------------------------------------------------------------------------
-        */
-
+        // Upload Attachment
         $attachmentPath = null;
 
         if ($req->hasFile('attachment')) {
@@ -74,9 +67,8 @@ if ($req->has('items') && is_string($req->items)) {
 
             $filename = time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
 
-           $destinationPath = public_path('storage/opportunities'); // ✅ Matches your folder
+            $destinationPath = public_path('storage/opportunities');
 
-            // Create folder if not exists
             if (!file_exists($destinationPath)) {
                 mkdir($destinationPath, 0777, true);
             }
@@ -86,13 +78,8 @@ if ($req->has('items') && is_string($req->items)) {
             $attachmentPath = 'storage/opportunities/' . $filename;
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | Generate Opportunity Code
-        |--------------------------------------------------------------------------
-        */
-
-        $last = Opportunity::orderBy('id', 'desc')->first();
+        // Generate Opportunity Code
+        $last = Opportunity::latest('id')->first();
 
         $number = $last && $last->opportunity_code
             ? intval(preg_replace('/\D/', '', $last->opportunity_code)) + 1
@@ -102,14 +89,52 @@ if ($req->has('items') && is_string($req->items)) {
 
         $parentId = null;
 
-        /*
-        |--------------------------------------------------------------------------
-        | Save Opportunity Items
-        |--------------------------------------------------------------------------
-        */
+        $items = $req->input('items', []);
 
-        foreach ($req->items as $index => $item) {
+        // If items exist
+        if (!empty($items)) {
 
+            foreach ($items as $index => $item) {
+
+                $opportunity = Opportunity::create([
+
+                    'parent_id'        => null,
+                    'opportunity_code' => $opportunityCode,
+                    'opportunity_date' => $req->opportunity_date ?? now()->toDateString(),
+
+                    'user_id'          => Auth::id(),
+                    'customer_id'      => $req->customer_id,
+                    'principal_id'     => $req->principal_id,
+
+                    'quotation_ref'    => $req->quotation_ref,
+                    'details'          => $req->details,
+                    'attachment'       => $attachmentPath,
+
+                    'item_id'          => $item['item_id'] ?? null,
+                    'purchase_group'   => $item['purchase_group'] ?? null,
+                    'location'         => $item['location'] ?? null,
+                    'quantity'         => $item['quantity'] ?? null,
+                    'item_date'        => $item['date'] ?? null,
+                    'item_status'      => $item['status'] ?? 'Pending',
+
+                    'status'           => $req->status ?? 'Open',
+
+                    'created_by'       => Auth::id(),
+                    'updated_by'       => Auth::id(),
+                ]);
+
+                if ($index == 0) {
+                    $parentId = $opportunity->id;
+                }
+
+                $opportunity->update([
+                    'parent_id' => $parentId
+                ]);
+            }
+
+        } else {
+
+            // Create opportunity without items
             $opportunity = Opportunity::create([
 
                 'parent_id'        => null,
@@ -117,7 +142,6 @@ if ($req->has('items') && is_string($req->items)) {
                 'opportunity_date' => $req->opportunity_date ?? now()->toDateString(),
 
                 'user_id'          => Auth::id(),
-
                 'customer_id'      => $req->customer_id,
                 'principal_id'     => $req->principal_id,
 
@@ -125,22 +149,13 @@ if ($req->has('items') && is_string($req->items)) {
                 'details'          => $req->details,
                 'attachment'       => $attachmentPath,
 
-                'item_id'          => $item['item_id'] ?? null,
-                'purchase_group'   => $item['purchase_group'] ?? null,
-                'location'         => $item['location'] ?? null,
-                'quantity'         => $item['quantity'] ?? null,
-                'item_date'        => $item['date'] ?? now()->toDateString(),
-                'item_status'      => $item['status'] ?? 'Pending',
-
-                'status'           => $req->status,
+                'status'           => $req->status ?? 'Open',
 
                 'created_by'       => Auth::id(),
                 'updated_by'       => Auth::id(),
             ]);
 
-            if ($index === 0) {
-                $parentId = $opportunity->id;
-            }
+            $parentId = $opportunity->id;
 
             $opportunity->update([
                 'parent_id' => $parentId
@@ -149,43 +164,41 @@ if ($req->has('items') && is_string($req->items)) {
 
         DB::commit();
 
-        // Audit Log
         saveLog('CREATE_OPPORTUNITY', 'Opportunity', [
             'opportunity_code' => $opportunityCode
         ]);
 
         return response()->json([
-            'status'           => 200,
-            'message'          => 'Opportunity created successfully.',
+            'status' => 200,
+            'message' => 'Opportunity created successfully.',
             'opportunity_code' => $opportunityCode,
-            'parent_id'        => $parentId,
-            'attachment'       => $attachmentPath,
-        ], 200);
+            'parent_id' => $parentId,
+            'attachment' => $attachmentPath,
+        ]);
 
     } catch (ValidationException $e) {
 
         DB::rollBack();
 
         return response()->json([
-            'status'  => 422,
+            'status' => 422,
             'message' => 'Validation failed.',
-            'errors'  => $e->errors(),
+            'errors' => $e->errors(),
         ], 422);
 
     } catch (\Exception $e) {
 
         DB::rollBack();
 
-        Log::error('Opportunity create error: ' . $e->getMessage());
+        Log::error($e);
 
         return response()->json([
-            'status'  => 500,
+            'status' => 500,
             'message' => 'Failed to create opportunity.',
-            'error'   => $e->getMessage(), // Remove in production
+            'error' => $e->getMessage(),
         ], 500);
     }
 }
-
     /**
      * COMMON FILTER FUNCTION (REUSABLE)
      */
