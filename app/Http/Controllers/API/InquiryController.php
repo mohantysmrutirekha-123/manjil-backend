@@ -98,10 +98,6 @@ public function store(Request $req)
             'principal_id'     => 'required|exists:users,id',
             'status'           => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
             'date'             => 'required|date',
-            'items'            => 'required|array|min:1',
-            'items.*.item_id'  => 'required|exists:items,id',
-            'items.*.quantity' => 'required|integer|min:1',
-            'items.*.date'     => 'nullable|date',
         ]);
 
         $last = Inquiry::orderBy('id', 'desc')->first();
@@ -112,47 +108,32 @@ public function store(Request $req)
 
         $inquiryCode = 'INQ' . str_pad($number, 5, '0', STR_PAD_LEFT);
 
-        $parentId = null;
+        $inquiry = Inquiry::create([
+            'parent_id'        => null,
+            'inquiry_id'       => $req->inquiry_id,
+            'inquiry_code'     => $inquiryCode,
+            'inquiry_date'     => $req->date,
 
-        foreach ($req->items as $index => $item) {
+            'enquiry_type'     => $req->enquiry_type,
+            'customer_id'      => $req->customer_id,
 
-            $inquiry = Inquiry::create([
-                'parent_id'        => null,
-                'inquiry_id'     => $req->inquiry_id,
-                'inquiry_code'     => $inquiryCode,
-                'inquiry_date'     => $item['date'] ?? $req->date,
+            'concerned_person' => $req->concerned_person,
+            'concerned_area'   => $req->concerned_area,
 
-                'enquiry_type'     => $req->enquiry_type,
-                'customer_id'      => $req->customer_id,
+            'principal_id'     => $req->principal_id,
+            'status'           => $req->status,
 
-                'concerned_person' => $req->concerned_person,
-                'concerned_area'   => $req->concerned_area,
+            'user_id'          => Auth::id(),
+            'created_by'       => Auth::id(),
+            'updated_by'       => Auth::id()
+        ]);
 
-                'item_id'          => $item['item_id'],
-                'quantity'         => $item['quantity'],
+        // Single-row record → it is its own parent (no item children to group).
+        $inquiry->update([
+            'parent_id' => $inquiry->id
+        ]);
 
-                'principal_id'     => $req->principal_id,
-                'status'           => $req->status,
-
-                'user_id'          => Auth::id(),
-                'created_by'       => Auth::id(),
-                'updated_by'       => Auth::id()
-            ]);
-
-            if ($index == 0) {
-
-                $parentId = $inquiry->id;
-
-                $inquiry->update([
-                    'parent_id' => $parentId
-                ]);
-            } else {
-
-                $inquiry->update([
-                    'parent_id' => $parentId
-                ]);
-            }
-        }
+        $parentId = $inquiry->id;
 
         DB::commit();
 
@@ -173,7 +154,7 @@ public function store(Request $req)
             'errors' => $e->errors()
         ], 422);
 
-    } catch (\Exception $e) {
+    } catch (\Throwable $e) {
 
         DB::rollBack();
 

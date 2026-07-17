@@ -51,7 +51,7 @@ if ($req->has('items') && is_string($req->items)) {
             'status'           => 'required|in:Open,In Progress,Converted,Lost',
             'opportunity_date' => 'nullable|date',
 
-            'items'                  => 'required|array|min:1',
+            'items'                  => 'nullable|array',
             'items.*.item_id'        => 'nullable|exists:items,id',
             'items.*.purchase_group' => 'nullable|string|max:255',
             'items.*.location'       => 'nullable|string|max:255',
@@ -643,6 +643,7 @@ if ($req->has('items') && is_string($req->items)) {
                 'concerned_area'   => 'nullable|string|max:255',
                 'status'           => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
                 'date'             => 'nullable|date',
+                'url'              => 'nullable|url|max:255',
 
                 // Optional: append to an existing enquiry instead of creating a new one
                 'inquiry_id'       => 'nullable|string|max:100',
@@ -770,6 +771,7 @@ if ($req->has('items') && is_string($req->items)) {
 
                         'item_id'          => $oppItem->item_id,
                         'quantity'         => $oppItem->quantity,
+                        'url'              => $req->url,
 
                         'principal_id'     => $firstRow->principal_id,
                         'status'           => $req->status,
@@ -814,6 +816,7 @@ if ($req->has('items') && is_string($req->items)) {
 
                     'concerned_person' => $req->concerned_person,
                     'concerned_area'   => $req->concerned_area,
+                    'url'              => $req->url,
 
                     'status'           => $req->status,
 
