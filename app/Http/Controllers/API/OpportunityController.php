@@ -851,82 +851,285 @@ if ($req->has('items') && is_string($req->items)) {
 
 
 
-public function convertOpportunityToPrincipalQuotation(Request $request, $id)
+// public function convertOpportunityToPrincipalQuotation(Request $request, $id)
+// {
+//     DB::beginTransaction();
+
+//     try {
+
+//         $firstInquiry = Inquiry::find($id);
+
+//         if (!$firstInquiry) {
+//             return response()->json([
+//                 'status' => 404,
+//                 'message' => 'Inquiry not found.'
+//             ], 404);
+//         }
+
+//         if ($firstInquiry->user_id != Auth::id() && Auth::user()->role != 'admin') {
+//             return response()->json([
+//                 'status' => 403,
+//                 'message' => 'Unauthorized.'
+//             ], 403);
+//         }
+
+//         $validated = $request->validate([
+//             'principal_quote_no'   => 'required|string|max:255',
+//             'principal_quote_date' => 'required|date',
+//             'customer_id'          => 'required|exists:users,id',
+//             'principal_id'         => 'nullable|exists:users,id',
+//             'status'               => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
+//             'items'                => 'required|array|min:1',
+//             'items.*.id'           => 'required|exists:inquiries,id',
+//             'items.*.price'        => 'required|numeric|min:0'
+//         ]);
+
+//         foreach ($validated['items'] as $item) {
+
+//             Inquiry::where('id', $item['id'])->update([
+//                 'enquiry_type'         => 'principal_quotation',
+//                 'principal_quote_no'   => $validated['principal_quote_no'],
+//                 'principal_quote_date' => $validated['principal_quote_date'],
+//                 'customer_id'          => $validated['customer_id'],
+//                 'principal_id'         => $validated['principal_id'],
+//                 'price'                => $item['price'],
+//                 'status'               => $validated['status'],
+//                 'updated_by'           => Auth::id(),
+//             ]);
+//         }
+
+//         DB::commit();
+
+//         return response()->json([
+//             'status' => 200,
+//             'message' => 'Principal quotation converted successfully.'
+//         ], 200);
+
+//     } catch (ValidationException $e) {
+
+//         DB::rollBack();
+
+//         return response()->json([
+//             'status' => 422,
+//             'errors' => $e->errors()
+//         ], 422);
+
+//     } catch (\Exception $e) {
+
+//         DB::rollBack();
+
+//         Log::error($e->getMessage());
+
+//         return response()->json([
+//             'status' => 500,
+//             'message' => $e->getMessage()
+//         ], 500);
+//     }
+
+// }
+
+
+public function convertOpportunityToPrincipalQuotation(Request $req)
 {
     DB::beginTransaction();
-
+ 
     try {
-
-        $firstInquiry = Inquiry::find($id);
-
-        if (!$firstInquiry) {
-            return response()->json([
-                'status' => 404,
-                'message' => 'Inquiry not found.'
-            ], 404);
-        }
-
-        if ($firstInquiry->user_id != Auth::id() && Auth::user()->role != 'admin') {
-            return response()->json([
-                'status' => 403,
-                'message' => 'Unauthorized.'
-            ], 403);
-        }
-
-        $validated = $request->validate([
-            'principal_quote_no'   => 'required|string|max:255',
-            'principal_quote_date' => 'required|date',
-            'customer_id'          => 'required|exists:users,id',
-            'principal_id'         => 'nullable|exists:users,id',
-            'status'               => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
-            'items'                => 'required|array|min:1',
-            'items.*.id'           => 'required|exists:inquiries,id',
-            'items.*.price'        => 'required|numeric|min:0'
+        $req->validate([
+            'opportunity_item_ids'   => 'required|array|min:1',
+            'opportunity_item_ids.*' => 'required|distinct|exists:opportunities,id',
+            'opportunity_id'         => 'nullable|exists:opportunities,id',
+ 
+            'principal_quote_no'     => 'required|string|max:255',
+            'principal_quote_date'   => 'required|date',
+            'customer_id'            => 'required|exists:users,id',
+            'principal_id'           => 'nullable|exists:users,id',
+            'status'                 => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
+ 
+            'items'                  => 'required|array|min:1',
+            'items.*.opportunity_item_id' => 'required|distinct|exists:opportunities,id',
+            'items.*.price'          => 'required|numeric|min:0',
         ]);
-
-        foreach ($validated['items'] as $item) {
-
-            Inquiry::where('id', $item['id'])->update([
-                'enquiry_type'         => 'principal_quotation',
-                'principal_quote_no'   => $validated['principal_quote_no'],
-                'principal_quote_date' => $validated['principal_quote_date'],
-                'customer_id'          => $validated['customer_id'],
-                'principal_id'         => $validated['principal_id'],
-                'price'                => $item['price'],
-                'status'               => $validated['status'],
+ 
+        $opportunityItemIds = collect($req->opportunity_item_ids)
+            ->map(fn ($id) => (int) $id)
+            ->values();
+ 
+        $itemRows = Opportunity::whereIn('id', $opportunityItemIds)
+            ->lockForUpdate()
+            ->get();
+ 
+        if ($itemRows->count() !== $opportunityItemIds->count()) {
+            DB::rollBack();
+            return response()->json(['status' => 404, 'message' => 'No matching opportunity items found'], 404);
+        }
+ 
+        // All selected rows must belong to the same opportunity (same parent_id)
+        $selectedOpportunityParentIds = $itemRows
+            ->map(fn ($row) => $row->parent_id ?? $row->id)
+            ->unique()
+            ->values();
+ 
+        if ($selectedOpportunityParentIds->count() !== 1) {
+            DB::rollBack();
+            return response()->json([
+                'status'     => 422,
+                'message'    => 'Selected items must belong to the same opportunity',
+                'parent_ids' => $selectedOpportunityParentIds,
+            ], 422);
+        }
+ 
+        if ($req->filled('opportunity_id')) {
+            $opportunityScope = Opportunity::find($req->opportunity_id);
+            $opportunityScopeParentId = $opportunityScope->parent_id ?? $opportunityScope->id;
+ 
+            if ((int) $selectedOpportunityParentIds->first() !== (int) $opportunityScopeParentId) {
+                DB::rollBack();
+                return response()->json([
+                    'status'  => 422,
+                    'message' => 'Selected items do not belong to the requested opportunity',
+                ], 422);
+            }
+        }
+ 
+        // Block items already converted (to enquiry OR principal quotation)
+        $alreadyConverted = $itemRows->whereNotNull('converted_inquiry_id');
+        if ($alreadyConverted->isNotEmpty()) {
+            DB::rollBack();
+            return response()->json([
+                'status'  => 422,
+                'message' => 'Some selected items have already been converted',
+                'ids'     => $alreadyConverted->pluck('id'),
+            ], 422);
+        }
+ 
+        // price lookup keyed by opportunity item id
+        $priceByOppItemId = collect($req->items)
+            ->keyBy('opportunity_item_id')
+            ->map(fn ($row) => $row['price']);
+ 
+        $firstRow = $itemRows->first();
+ 
+        // ── Determine the next OPP-### number. Items converted from an
+        //    Opportunity get an "OPP-" prefixed id instead of the normal
+        //    "INQ#####" scheme, so they're visually distinguishable in
+        //    the Enquiry ID column. Numbering continues from whatever
+        //    the highest existing OPP-### value is. ────────────────────
+        $lastOpp = Inquiry::where('inquiry_id', 'like', 'OPP-%')
+            ->orderByRaw("CAST(SUBSTRING(inquiry_id, 5) AS UNSIGNED) DESC")
+            ->lockForUpdate()
+            ->first();
+ 
+        $nextNumber = $lastOpp
+            ? intval(preg_replace('/\D/', '', $lastOpp->inquiry_id)) + 1
+            : 1;
+ 
+        $parentId = null;
+        $groupCode = 'OPP-' . str_pad($nextNumber, 3, '0', STR_PAD_LEFT);
+ 
+        $createdInquiries = [];
+ 
+        foreach ($itemRows as $oppItem) {
+ 
+            // Each converted item gets its own sequential OPP-### id.
+            $inquiryId = 'OPP-' . str_pad($nextNumber, 3, '0', STR_PAD_LEFT);
+            $nextNumber++;
+ 
+            $inquiry = Inquiry::create([
+                'parent_id'             => $parentId,
+                'inquiry_id'            => $inquiryId,
+                'inquiry_code'          => $groupCode,
+                'inquiry_date'          => now()->toDateString(),
+ 
+                'enquiry_type'          => 'principal_quotation',
+                'customer_id'           => $req->customer_id,
+ 
+                'item_id'               => $oppItem->item_id,
+                'quantity'              => $oppItem->quantity,
+ 
+                'principal_id'          => $req->principal_id,
+ 
+                'principal_quote_no'    => $req->principal_quote_no,
+                'principal_quote_date'  => $req->principal_quote_date,
+ 
+                'price'                 => $priceByOppItemId[$oppItem->id] ?? 0,
+                'status'                => $req->status,
+ 
+                'source_opportunity_item_id' => $oppItem->id,
+ 
+                'user_id'               => Auth::id(),
+                'created_by'            => Auth::id(),
+                'updated_by'            => Auth::id(),
+            ]);
+ 
+            if (!$parentId) {
+                $parentId = $inquiry->id;
+            }
+ 
+            $inquiry->update(['parent_id' => $parentId]);
+ 
+            // Mark the opportunity item row as converted
+            $oppItem->update([
+                'converted_inquiry_id' => $inquiry->id,
+                'item_status'          => 'Quotation Placed',
                 'updated_by'           => Auth::id(),
             ]);
+ 
+            $createdInquiries[] = $inquiry->id;
         }
-
+ 
+        // ── Flip the opportunity head status to "Converted" once every
+        //    item row under it has been converted ─────────────────────
+        $oppParentId = $firstRow->parent_id ?? $firstRow->id;
+ 
+        $remainingOpen = Opportunity::where('parent_id', $oppParentId)
+            ->whereNull('converted_inquiry_id')
+            ->count();
+ 
+        if ($remainingOpen === 0) {
+            Opportunity::where('parent_id', $oppParentId)->update([
+                'status'     => 'Converted',
+                'updated_by' => Auth::id(),
+            ]);
+        }
+ 
         DB::commit();
-
+ 
+        saveLog('CONVERT_OPPORTUNITY_TO_PRINCIPAL_QUOTATION', 'Opportunity', [
+            'opportunity_item_ids' => $req->opportunity_item_ids,
+            'group_code'           => $groupCode,
+            'inquiry_parent_id'    => $parentId,
+        ]);
+ 
         return response()->json([
-            'status' => 200,
-            'message' => 'Principal quotation converted successfully.'
-        ], 200);
-
+            'status'       => 200,
+            'message'      => 'Opportunity item(s) converted to principal quotation successfully',
+            'group_code'   => $groupCode,
+            'parent_id'    => $parentId,
+            'inquiry_ids'  => $createdInquiries,
+        ]);
+ 
     } catch (ValidationException $e) {
-
+ 
         DB::rollBack();
-
+ 
         return response()->json([
-            'status' => 422,
-            'errors' => $e->errors()
+            'status'  => 422,
+            'message' => 'Validation failed',
+            'errors'  => $e->errors(),
         ], 422);
-
+ 
     } catch (\Exception $e) {
-
+ 
         DB::rollBack();
-
-        Log::error($e->getMessage());
-
+ 
+        Log::error('Opportunity to Principal Quotation conversion error: ' . $e->getMessage());
+ 
         return response()->json([
-            'status' => 500,
-            'message' => $e->getMessage()
+            'status'  => 500,
+            'message' => 'Failed to convert opportunity to principal quotation. ' . $e->getMessage(),
         ], 500);
     }
-
 }
-
+ 
 
 }

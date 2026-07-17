@@ -111,14 +111,33 @@ public function negotiationList()
 {
     try {
 
-        // Parent enquiries only
+        $stages = ['Negotiation', 'Customer_PO', 'PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'];
+
+        // Anchor rows only (id === parent_id) — one enquiry group each.
+        //
+        // NOTE: previously this only matched when the ANCHOR row itself
+        // had moved to one of $stages. But convertTonegotiation() only
+        // updates the specific item(s) the user selects — it never
+        // touches the anchor row unless the anchor happens to be one of
+        // the selected items. So converting a single non-anchor item
+        // (e.g. item "c" while the anchor is still "d"/"a" sitting at an
+        // earlier stage) made the whole enquiry silently vanish from this
+        // list, even though the converted item genuinely exists. The
+        // orWhereHas('children') clause (already used by
+        // principalquotationList()/customerquotationList()) fixes this:
+        // an enquiry shows up if EITHER the anchor OR any of its children
+        // have reached one of these stages.
         $enquiries = Inquiry::with([
             'customer:id,name',
             'item:id,name,mat_code,part_model_no,description'
         ])
         ->whereColumn('id', 'parent_id')
-        //   ->where('enquiry_type', 'Negotiation')
-        ->whereIn('enquiry_type', ['Negotiation', 'Customer_PO','PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'])
+        ->where(function ($q) use ($stages) {
+            $q->whereIn('enquiry_type', $stages)
+              ->orWhereHas('children', function ($cq) use ($stages) {
+                  $cq->whereIn('enquiry_type', $stages);
+              });
+        })
         ->latest()
         ->get();
 
@@ -126,55 +145,84 @@ public function negotiationList()
 
         foreach ($enquiries as $enquiry) {
 
-            // Get all child items for this enquiry
+            // All negotiation-stage-or-later items across every conversion
+            // batch for this enquiry.
             $items = Inquiry::with([
                 'item:id,name,mat_code,part_model_no,description'
             ])
             ->where('parent_id', $enquiry->id)
-            //  ->where('enquiry_type', 'Negotiation')
-            ->whereIn('enquiry_type', ['Negotiation', 'Customer_PO','PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'])
+            ->whereIn('enquiry_type', $stages)
             ->get();
 
-            $data[] = [
-                'id'                   => $enquiry->id,
-                'parent_id'            => $enquiry->parent_id,
-                'inquiry_id'           => $enquiry->inquiry_id,
-                'inquiry_code'         => $enquiry->inquiry_code,
-                'enquiry_type'         => $enquiry->enquiry_type,
-                'customer_id'          => $enquiry->customer_id,
-                'customer_name'        => optional($enquiry->customer)->name,
-                'principal_id'         => $enquiry->principal_id,
-                'principal_quote_no'   => $enquiry->principal_quote_no,
-                'principal_quote_date' => $enquiry->principal_quote_date,
-                'offer_type'         => $enquiry->offer_type,
-                'quantity_quoted'    => $enquiry->quantity_quoted,
-                'validity_period'    => $enquiry->validity_period,
-                'negotiation_details' => $enquiry->negotiation_details,
-                'follow_notes'        => $enquiry->follow_notes,
-                'discussion_dates'    => $enquiry->discussion_dates,
-                'revised_value'       => $enquiry->revised_value,
-                'price'                => $enquiry->price,
-                'status'               => $enquiry->status,
-                'quotation_no'         => $enquiry->quotation_no,
-                'budgetary_no'          => $enquiry->budgetary_no,
+            if ($items->isEmpty()) {
+                continue;
+            }
 
-                'items' => $items->map(function ($row) {
+            // Items converted together in one convertTonegotiation() call
+            // get the same negotiation_details + discussion_dates written
+            // onto them at once, so that pair identifies a batch — the
+            // same way quotation_no/date identify a batch upstream.
+            // `status` intentionally excluded, for the same reason as the
+            // other stages: editing one item's status shouldn't fracture
+            // the batch it belongs to.
+            $batches = $items->groupBy(function ($row) {
+                return $row->negotiation_details . '|' . $row->discussion_dates;
+            });
 
-                    return [
-                        'id'            => $row->id,
-                        'item_id'       => $row->item_id,
-                        'material_code' => optional($row->item)->mat_code,
-                        'item_name'     => optional($row->item)->name,
-                        'description'   => optional($row->item)->description,
-                        'part_model_no' => optional($row->item)->part_model_no,
-                        'quantity'      => $row->quantity,
-                        'price'         => $row->price,
-                        'status'        => $row->status,
-                        'date'          => optional($row->created_at)->format('Y-m-d'),
-                    ];
+            foreach ($batches as $batchItems) {
 
-                })->values()
-            ];
+                // Use an item that's ACTUALLY in this batch as the source
+                // of truth for the row's fields — never the enquiry
+                // anchor directly. negotiation_details/follow_notes/
+                // discussion_dates/revised_value/status/quotation_no are
+                // only ever written onto the converted items themselves,
+                // not onto the anchor row, so reading them off $enquiry
+                // returned null/stale data whenever the anchor wasn't
+                // among the converted items.
+                $first = $batchItems->first();
+
+                $data[] = [
+                    'id'                   => $first->id, // an item in this batch — used for edit/update actions
+                    'parent_id'            => $enquiry->id,
+                    'inquiry_id'           => $enquiry->inquiry_id,
+                    'inquiry_code'         => $enquiry->inquiry_code,
+                    'enquiry_type'         => $first->enquiry_type,
+                    'customer_id'          => $enquiry->customer_id,
+                    'customer_name'        => optional($enquiry->customer)->name,
+                    'principal_id'         => $first->principal_id,
+                    'principal_quote_no'   => $first->principal_quote_no,
+                    'principal_quote_date' => $first->principal_quote_date,
+                    'offer_type'           => $first->offer_type,
+                    'quantity_quoted'      => $first->quantity_quoted,
+                    'validity_period'      => $first->validity_period,
+                    'negotiation_details'  => $first->negotiation_details,
+                    'follow_notes'         => $first->follow_notes,
+                    'discussion_dates'     => $first->discussion_dates,
+                    'revised_value'        => $first->revised_value,
+                    'price'                => $batchItems->sum('price'),
+                    'status'               => $first->status,
+                    'quotation_no'         => $first->quotation_no,
+                    'budgetary_no'         => $first->budgetary_no,
+
+                    'items' => $batchItems->map(function ($row) {
+
+                        return [
+                            'id'            => $row->id,
+                            'item_id'       => $row->item_id,
+                            'material_code' => optional($row->item)->mat_code,
+                            'item_name'     => optional($row->item)->name,
+                            'description'   => optional($row->item)->description,
+                            'part_model_no' => optional($row->item)->part_model_no,
+                            'quantity'      => $row->quantity,
+                            'price'         => $row->price,
+                            'status'        => $row->status,
+                            'date'          => optional($row->created_at)->format('Y-m-d'),
+                            'isConverted'   => $row->enquiry_type !== 'Negotiation',
+                        ];
+
+                    })->values()
+                ];
+            }
         }
 
         return response()->json([
@@ -206,9 +254,24 @@ public function update(Request $request, $id)
 
         $parentId = $inquiry->parent_id;
 
-        Inquiry::where('parent_id', $parentId)->update([
-            // 'quotation_no'   => $request->quotation_no,
-            // 'budgetary_no'    => $request->budgetary_no,
+        // Same scoping fix as PrincipalQuoteController/CustomerQuoteController:
+        // don't blindly update everything sharing parent_id — that would
+        // overwrite negotiation_details/status/etc. on unrelated batches
+        // under the same enquiry too.
+        //
+        // Keyed on negotiation_details + discussion_dates to match
+        // negotiationList()'s batch grouping exactly — items in a
+        // negotiation batch don't necessarily share the same
+        // quotation_no/budgetary_no (they may have arrived from
+        // different upstream Customer Quotation batches), so that pair
+        // is NOT a valid batch identity here the way it is upstream.
+        $currentNegotiationDetails = $inquiry->negotiation_details;
+        $currentDiscussionDates    = $inquiry->discussion_dates;
+
+        Inquiry::where('parent_id', $parentId)
+            ->where('negotiation_details', $currentNegotiationDetails)
+            ->where('discussion_dates', $currentDiscussionDates)
+            ->update([
             'negotiation_details'    => $request->negotiation_details,
             'follow_notes' => $request->follow_notes,
             'discussion_dates'    => $request->discussion_dates,
@@ -316,35 +379,30 @@ public function store(Request $request)
 
         if ($request->offer_type == 'Quotation') {
 
-            $lastQuotation = Inquiry::whereNotNull('quotation_no')
-                ->orderByDesc('id')
-                ->first();
+            // Same fix as CustomerQuoteController: quotation_no is shared
+            // across the whole inquiries table, so this MUST use the true
+            // max numeric suffix rather than ->orderByDesc('id')->first().
+            // Otherwise a number generated here can collide with one
+            // already issued from the Customer Quotation stage.
+            $lastNo = (int) Inquiry::whereNotNull('quotation_no')
+                ->get(['quotation_no'])
+                ->reduce(function ($max, $row) {
+                    $num = (int) preg_replace('/[^0-9]/', '', $row->quotation_no);
+                    return max($max, $num);
+                }, 0);
 
-            if ($lastQuotation && $lastQuotation->quotation_no) {
-
-                $lastNo = (int) preg_replace('/[^0-9]/', '', $lastQuotation->quotation_no);
-                $quotationNo = 'QN-' . str_pad($lastNo + 1, 6, '0', STR_PAD_LEFT);
-
-            } else {
-
-                $quotationNo = 'QN-000001';
-            }
+            $quotationNo = 'QN-' . str_pad($lastNo + 1, 6, '0', STR_PAD_LEFT);
 
         } else {
 
-            $lastBudgetary = Inquiry::whereNotNull('budgetary_no')
-                ->orderByDesc('id')
-                ->first();
+            $lastNo = (int) Inquiry::whereNotNull('budgetary_no')
+                ->get(['budgetary_no'])
+                ->reduce(function ($max, $row) {
+                    $num = (int) preg_replace('/[^0-9]/', '', $row->budgetary_no);
+                    return max($max, $num);
+                }, 0);
 
-            if ($lastBudgetary && $lastBudgetary->budgetary_no) {
-
-                $lastNo = (int) preg_replace('/[^0-9]/', '', $lastBudgetary->budgetary_no);
-                $budgetaryNo = 'BO-' . str_pad($lastNo + 1, 6, '0', STR_PAD_LEFT);
-
-            } else {
-
-                $budgetaryNo = 'BO-000001';
-            }
+            $budgetaryNo = 'BO-' . str_pad($lastNo + 1, 6, '0', STR_PAD_LEFT);
         }
 
         // Insert Single Record

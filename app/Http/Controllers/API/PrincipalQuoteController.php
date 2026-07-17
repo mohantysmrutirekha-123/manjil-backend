@@ -14,17 +14,7 @@ class PrincipalQuoteController extends Controller
 {
     try {
 
-        // Parent enquiries only
-        // $enquiries = Inquiry::with([
-        //     'customer:id,name',
-        //     'item:id,name,mat_code,part_model_no,description'
-        // ])
-        // ->whereColumn('id', 'parent_id')
-        // //   ->where('enquiry_type', 'principal_quotation')
-        // ->whereIn('enquiry_type', ['principal_quotation', 'customer_quotation', 'Customer_PO', 'Negotiation','Customer_PO', 'PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'])
-        // ->latest()
-        // ->get();
-
+        // Anchor rows only (id === parent_id) — one enquiry group each.
         $stages = ['principal_quotation', 'customer_quotation', 'Customer_PO', 'Negotiation', 'PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'];
 
         $enquiries = Inquiry::with([
@@ -45,30 +35,60 @@ class PrincipalQuoteController extends Controller
 
         foreach ($enquiries as $enquiry) {
 
-            // Get all child items for this enquiry
+            // All converted items across every conversion batch for this enquiry.
             $items = Inquiry::with([
-                'item:id,name,mat_code,part_model_no,description'
+                'item:id,name,mat_code,part_model_no,description',
+                 'sourceOpportunityItem:id,opportunity_code',
             ])
             ->where('parent_id', $enquiry->id)
-            //  ->where('enquiry_type', 'principal_quotation')
-            ->whereIn('enquiry_type', ['principal_quotation', 'customer_quotation', 'Customer_PO', 'Negotiation','Customer_PO', 'PO_Principal','Sales_Invoice', 'Purchase_Invoice'])
+            ->whereIn('enquiry_type', $stages)
             ->get();
 
-            $data[] = [
-                'id'                   => $enquiry->id,
-                'parent_id'            => $enquiry->parent_id,
-                'inquiry_id'           => $enquiry->inquiry_id,
-                'inquiry_code'         => $enquiry->inquiry_code,
-                'enquiry_type'         => $enquiry->enquiry_type,
-                'customer_id'          => $enquiry->customer_id,
-                'customer_name'        => optional($enquiry->customer)->name,
-                'principal_id'         => $enquiry->principal_id,
-                'principal_quote_no'   => $enquiry->principal_quote_no,
-                'principal_quote_date' => $enquiry->principal_quote_date,
-                'price'                => $enquiry->price,
-                'status'               => $enquiry->status,
+            // Items are converted in batches — e.g. 2 of 6 items converted now
+            // under one principal_quote_no, another 2 later under a different
+            // one. There's no separate anchor row per batch (no new column,
+            // no extra rows), so we split them back into batches here purely
+            // by grouping on principal_quote_no + principal_quote_date. Each
+            // group becomes its own row in the response, exactly like a
+            // separate Principal Quotation entry, while still pointing at
+            // the same enquiry.
+            //
+            // NOTE: `status` must NOT be part of this key. Converting one
+            // item in a batch to a Customer Quotation changes that item's
+            // `status` (and enquiry_type) while its siblings still awaiting
+            // conversion keep their old status. If `status` were included
+            // here, that single batch would fracture into two rows the
+            // moment any one item moved forward — which is exactly the
+            // "same enquiry/quote shows as 2 rows" bug.
 
-                'items' => $items->map(function ($row) {
+            $batches = $items->groupBy(function ($row) {
+                return $row->principal_quote_no . '|' . $row->principal_quote_date;
+            });
+
+            foreach ($batches as $batchItems) {
+
+                // Prefer an item still awaiting conversion as the anchor —
+                // its id/status drive the row's Edit action and STATUS
+                // badge. Once every item in the batch has moved on, fall
+                // back to the last item so the row shows "Completed".
+                $first = $batchItems->firstWhere('enquiry_type', 'principal_quotation')
+                    ?? $batchItems->first();
+
+                $data[] = [
+                    'id'                   => $first->id, // first item in this batch — used for edit/update actions
+                    'parent_id'            => $enquiry->id,
+                    'inquiry_id'           => $enquiry->inquiry_id,
+                    'inquiry_code'         => $enquiry->inquiry_code,
+                    'enquiry_type'         => $first->enquiry_type,
+                    'customer_id'          => $enquiry->customer_id,
+                    'customer_name'        => optional($enquiry->customer)->name,
+                    'principal_id'         => $first->principal_id,
+                    'principal_quote_no'   => $first->principal_quote_no,
+                    'principal_quote_date' => $first->principal_quote_date,
+                    'price'                => $batchItems->sum('price'),
+                    'status'               => $first->status,
+
+                    'items' => $batchItems->map(function ($row) {
 
                     return [
                         'id'            => $row->id,
@@ -81,10 +101,17 @@ class PrincipalQuoteController extends Controller
                         'price'         => $row->price,
                         'status'        => $row->status,
                         'date'          => optional($row->created_at)->format('Y-m-d'),
+
+                        // NEW: tells frontend this item already moved to the next
+                        // stage, so it should be shown (not hidden) with a
+                        // "Converted" badge, and excluded from re-conversion.
+                        'is_converted'  => $row->enquiry_type !== 'principal_quotation',
+                        'enquiry_type'  => $row->enquiry_type,
                     ];
 
                 })->values()
-            ];
+                ];
+            }
         }
 
         return response()->json([
@@ -117,21 +144,34 @@ public function update(Request $request, $id)
 
         $parentId = $inquiry->parent_id;
 
-        Inquiry::where('parent_id', $parentId)->update([
-            'principal_quote_no'   => $request->principal_quote_no,
-            'principal_quote_date' => $request->principal_quote_date,
-            'customer_id'          => $request->customer_id,
-            'principal_id'         => $request->principal_id,
-            'status'               => $request->status,
-            'updated_by'           => Auth::id(),
-        ]);
+        // Capture the batch's CURRENT identity before it gets overwritten,
+        // so the update only touches this specific conversion batch —
+        // not every batch sharing the same parent_id.
+        $currentQuoteNo   = $inquiry->principal_quote_no;
+        $currentQuoteDate = $inquiry->principal_quote_date;
+        $currentStatus    = $inquiry->status;
+
+        Inquiry::where('parent_id', $parentId)
+            ->where('principal_quote_no', $currentQuoteNo)
+            ->where('principal_quote_date', $currentQuoteDate)
+            ->where('status', $currentStatus)
+            ->update([
+                'principal_quote_no'   => $request->principal_quote_no,
+                'principal_quote_date' => $request->principal_quote_date,
+                'customer_id'          => $request->customer_id,
+                'principal_id'         => $request->principal_id,
+                'status'               => $request->status,
+                'updated_by'           => Auth::id(),
+            ]);
 
         foreach ($request->items as $item) {
 
-            Inquiry::where('id', $item['id'])->update([
-                'price' => $item['price'],
-                'updated_by' => Auth::id(),
-            ]);
+            Inquiry::where('id', $item['id'])
+                ->where('parent_id', $parentId) // guard: item must belong to this enquiry
+                ->update([
+                    'price'      => $item['price'],
+                    'updated_by' => Auth::id(),
+                ]);
         }
 
         DB::commit();
@@ -146,7 +186,7 @@ public function update(Request $request, $id)
 
         return response()->json([
             'error' => $e->getMessage()
-        ],500);
+        ], 500);
     }
 }
 
