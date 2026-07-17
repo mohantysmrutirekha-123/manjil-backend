@@ -634,9 +634,9 @@ if ($req->has('items') && is_string($req->items)) {
 
         try {
             $req->validate([
-                'opportunity_item_ids'   => 'required|array|min:1',
-                'opportunity_item_ids.*' => 'required|distinct|exists:opportunities,id',
-                'opportunity_id'         => 'nullable|exists:opportunities,id',
+                'opportunity_item_ids'   => 'nullable|array',
+                'opportunity_item_ids.*' => 'distinct|exists:opportunities,id',
+                'opportunity_id'         => 'required|exists:opportunities,id',
 
                 'enquiry_type'     => 'required|string|max:100',
                 'concerned_person' => 'required|string|max:255',
@@ -648,17 +648,42 @@ if ($req->has('items') && is_string($req->items)) {
                 'inquiry_id'       => 'nullable|string|max:100',
             ]);
 
-            $opportunityItemIds = collect($req->opportunity_item_ids)
-                ->map(fn ($id) => (int) $id)
-                ->values();
+            if (!empty($req->opportunity_item_ids)) {
 
-            $itemRows = Opportunity::whereIn('id', $opportunityItemIds)
-                ->lockForUpdate()
-                ->get();
+                // Specific item rows were selected → convert just those.
+                $opportunityItemIds = collect($req->opportunity_item_ids)
+                    ->map(fn ($id) => (int) $id)
+                    ->values();
 
-            if ($itemRows->count() !== $opportunityItemIds->count()) {
-                DB::rollBack();
-                return response()->json(['status' => 404, 'message' => 'No matching opportunity items found'], 404);
+                $itemRows = Opportunity::whereIn('id', $opportunityItemIds)
+                    ->lockForUpdate()
+                    ->get();
+
+                if ($itemRows->count() !== $opportunityItemIds->count()) {
+                    DB::rollBack();
+                    return response()->json(['status' => 404, 'message' => 'No matching opportunity items found'], 404);
+                }
+
+            } else {
+
+                // No item ids given → convert the entire opportunity (head + all children).
+                $opportunity = Opportunity::findOrFail($req->opportunity_id);
+
+                $oppGroupParentId = $opportunity->parent_id ?? $opportunity->id;
+
+                $itemRows = Opportunity::where(function ($q) use ($oppGroupParentId) {
+                        $q->where('id', $oppGroupParentId)
+                          ->orWhere('parent_id', $oppGroupParentId);
+                    })
+                    ->lockForUpdate()
+                    ->get();
+
+                $opportunityItemIds = $itemRows->pluck('id')->values();
+
+                if ($itemRows->isEmpty()) {
+                    DB::rollBack();
+                    return response()->json(['status' => 404, 'message' => 'No matching opportunity items found'], 404);
+                }
             }
 
             $selectedOpportunityParentIds = $itemRows
@@ -726,8 +751,57 @@ if ($req->has('items') && is_string($req->items)) {
 
             $createdInquiries = [];
 
-            foreach ($itemRows as $index => $oppItem) {
+            if ($itemRows->whereNotNull('item_id')->count() > 0) {
 
+                // Normal case: create one Inquiry row per opportunity line item.
+                foreach ($itemRows as $oppItem) {
+
+                    $inquiry = Inquiry::create([
+                        'parent_id'        => $parentId,
+                        'inquiry_id'       => $req->inquiry_id ?? $inquiryCode,
+                        'inquiry_code'     => $inquiryCode,
+                        'inquiry_date'     => $req->date ?? now()->toDateString(),
+
+                        'enquiry_type'     => $req->enquiry_type,
+                        'customer_id'      => $firstRow->customer_id,
+
+                        'concerned_person' => $req->concerned_person,
+                        'concerned_area'   => $req->concerned_area,
+
+                        'item_id'          => $oppItem->item_id,
+                        'quantity'         => $oppItem->quantity,
+
+                        'principal_id'     => $firstRow->principal_id,
+                        'status'           => $req->status,
+
+                        'source_opportunity_item_id' => $oppItem->id,
+
+                        'user_id'          => Auth::id(),
+                        'created_by'       => Auth::id(),
+                        'updated_by'       => Auth::id(),
+                    ]);
+
+                    // First newly-created row becomes the parent for the rest
+                    if (!$parentId) {
+                        $parentId = $inquiry->id;
+                    }
+
+                    $inquiry->update(['parent_id' => $parentId]);
+
+                    // Mark the opportunity item row as converted
+                    $oppItem->update([
+                        'converted_inquiry_id' => $inquiry->id,
+                        'item_status'          => 'Quotation Placed',
+                        'updated_by'           => Auth::id(),
+                    ]);
+
+                    $createdInquiries[] = $inquiry->id;
+                }
+
+            } else {
+
+                // No line items under this opportunity → create a single
+                // summary Inquiry for the whole thing instead.
                 $inquiry = Inquiry::create([
                     'parent_id'        => $parentId,
                     'inquiry_id'       => $req->inquiry_id ?? $inquiryCode,
@@ -736,36 +810,34 @@ if ($req->has('items') && is_string($req->items)) {
 
                     'enquiry_type'     => $req->enquiry_type,
                     'customer_id'      => $firstRow->customer_id,
+                    'principal_id'     => $firstRow->principal_id,
 
                     'concerned_person' => $req->concerned_person,
                     'concerned_area'   => $req->concerned_area,
 
-                    'item_id'          => $oppItem->item_id,
-                    'quantity'         => $oppItem->quantity,
-
-                    'principal_id'     => $firstRow->principal_id,
                     'status'           => $req->status,
-
-                    'source_opportunity_item_id' => $oppItem->id,
 
                     'user_id'          => Auth::id(),
                     'created_by'       => Auth::id(),
                     'updated_by'       => Auth::id(),
                 ]);
 
-                // First newly-created row becomes the parent for the rest
                 if (!$parentId) {
                     $parentId = $inquiry->id;
+                    $inquiry->update(['parent_id' => $parentId]);
                 }
 
-                $inquiry->update(['parent_id' => $parentId]);
-
-                // Mark the opportunity item row as converted
-                $oppItem->update([
-                    'converted_inquiry_id' => $inquiry->id,
-                    'item_status'          => 'Quotation Placed',
-                    'updated_by'           => Auth::id(),
-                ]);
+                // Mark every underlying opportunity row as converted, same
+                // guarantee as the per-item branch above, so the
+                // "already converted" guard and "remaining open" check
+                // below stay consistent.
+                foreach ($itemRows as $oppItem) {
+                    $oppItem->update([
+                        'converted_inquiry_id' => $inquiry->id,
+                        'item_status'          => 'Quotation Placed',
+                        'updated_by'           => Auth::id(),
+                    ]);
+                }
 
                 $createdInquiries[] = $inquiry->id;
             }
@@ -788,7 +860,7 @@ if ($req->has('items') && is_string($req->items)) {
             DB::commit();
 
             saveLog('CONVERT_OPPORTUNITY_TO_ENQUIRY', 'Opportunity', [
-                'opportunity_item_ids' => $req->opportunity_item_ids,
+                'opportunity_item_ids' => $opportunityItemIds,
                 'inquiry_code'         => $inquiryCode,
                 'inquiry_parent_id'    => $parentId,
             ]);
@@ -811,7 +883,7 @@ if ($req->has('items') && is_string($req->items)) {
                 'errors'  => $e->errors(),
             ], 422);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
 
             DB::rollBack();
 
