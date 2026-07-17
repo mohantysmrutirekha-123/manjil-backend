@@ -3,14 +3,15 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
 use App\Models\Inquiry;
+use App\Models\Item;
 use App\Models\User;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
-use Illuminate\Support\Facades\DB;
 
 class InquiryController extends Controller
 {
@@ -98,6 +99,7 @@ public function store(Request $req)
             'principal_id'     => 'required|exists:users,id',
             'status'           => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
             'date'             => 'required|date',
+            'url'              => 'nullable|url',
         ]);
 
         $last = Inquiry::orderBy('id', 'desc')->first();
@@ -122,6 +124,7 @@ public function store(Request $req)
 
             'principal_id'     => $req->principal_id,
             'status'           => $req->status,
+            'url'              => $req->url,
 
             'user_id'          => Auth::id(),
             'created_by'       => Auth::id(),
@@ -562,13 +565,15 @@ public function inquiryDetails($parentId)
 
 
 
-public function convertToprincipalqutation(Request $request, $id)
+public function convertToprincipalqutation(Request $request, $parentId)
 {
     DB::beginTransaction();
 
     try {
 
-        $firstInquiry = Inquiry::find($id);
+        // Look up the group by parent_id directly — any row belonging to
+        // this group works as the "first" reference row.
+        $firstInquiry = Inquiry::where('parent_id', $parentId)->first();
 
         if (!$firstInquiry) {
             return response()->json([
@@ -588,59 +593,104 @@ public function convertToprincipalqutation(Request $request, $id)
             'principal_quote_no'   => 'required|string|max:255',
             'principal_quote_date' => 'required|date',
             'status'               => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
+
             'items'                => 'required|array|min:1',
-            'items.*.id'           => 'required|exists:inquiries,id',
-            'items.*.price'        => 'required|numeric|min:0',
+            'items.*.id'           => 'nullable|integer|exists:inquiries,id',
+            'items.*.price'         => 'required|numeric|min:0',
+            'items.*.item_id'       => 'nullable|integer|exists:items,id',
+            'items.*.mat_code'      => 'required|string|max:30',
+            'items.*.description'   => 'nullable|string',
+            'items.*.part_model_no' => 'nullable|string|max:30',
+            'items.*.qty'           => 'nullable|integer|min:1',
+            'items.*.date'          => 'nullable|date',
+            
         ]);
 
-        // Selected IDs
-        $selectedIds = collect($validated['items'])->pluck('id')->toArray();
+        // Same parent_id, always — no new group is ever created.
+        $newParentId = $parentId;
 
-        // Current parent_id
-        $currentParentId = $firstInquiry->parent_id;
+        $existingRowsById = Inquiry::whereIn('id', collect($validated['items'])->pluck('id')->filter())
+            ->get()
+            ->keyBy('id');
 
-        if (!empty($currentParentId)) {
+        $resolvedItems = collect($validated['items'])->map(function ($item) use ($existingRowsById) {
 
-            // Total items in current parent
-            $totalItems = Inquiry::where('parent_id', $currentParentId)->count();
+            $existingRow = !empty($item['id']) ? $existingRowsById->get($item['id']) : null;
 
-            // Selected items from current parent
-            $selectedCount = Inquiry::where('parent_id', $currentParentId)
-                ->whereIn('id', $selectedIds)
-                ->count();
-
-            // If all items selected, keep same parent_id
-            if ($totalItems == $selectedCount) {
-
-                $newParentId = $currentParentId;
-
-            } else {
-
-                // Generate new parent_id
-                $latestParentId = Inquiry::max('parent_id');
-                $newParentId = ($latestParentId ?? 0) + 1;
+            if (!empty($item['item_id'])) {
+                $catalogItem = Item::find($item['item_id']);
+            } elseif ($existingRow && $existingRow->item_id) {
+                $catalogItem = Item::find($existingRow->item_id);
             }
 
-        } else {
+            if (empty($catalogItem)) {
+                $catalogItem = Item::firstOrCreate(
+                    ['mat_code' => $item['mat_code']],
+                    ['name' => $item['mat_code']]
+                );
+            }
 
-            // No parent_id yet
-            $latestParentId = Inquiry::max('parent_id');
-            $newParentId = ($latestParentId ?? 0) + 1;
-        }
+            $catalogItem->fill([
+                'mat_code'      => $item['mat_code'],
+                'description'   => $item['description'] ?? $catalogItem->description,
+                'part_model_no' => $item['part_model_no'] ?? $catalogItem->part_model_no,
+            ])->save();
 
-        // Update only selected items
-        foreach ($validated['items'] as $item) {
+            $item['item_id'] = $catalogItem->id;
+            $item['_existing_row'] = $existingRow;
 
-            Inquiry::where('id', $item['id'])->update([
-                'parent_id'            => $newParentId,
+            return $item;
+        });
+
+        $existingIds = Inquiry::where('parent_id', $newParentId)
+            ->pluck('id')
+            ->toArray();
+
+        foreach ($resolvedItems as $item) {
+
+            // Item-related fields only — these are the only things that
+            // ever change on an update or differ on a new row.
+            $itemFields = [
+                'item_id'      => $item['item_id'],
+                'price'        => $item['price'],
+                'quantity'     => $item['qty'] ?? null,
+                'inquiry_date' => $item['date'] ?? null,
+                
+            ];
+
+            $sharedFields = [
                 'enquiry_type'         => 'principal_quotation',
                 'principal_quote_no'   => $validated['principal_quote_no'],
                 'principal_quote_date' => $validated['principal_quote_date'],
-                'price'                => $item['price'],
                 'status'               => $validated['status'],
                 'updated_by'           => Auth::id(),
                 'updated_at'           => now(),
-            ]);
+            ];
+
+            if (!empty($item['id']) && in_array($item['id'], $existingIds)) {
+
+                // Update existing row — parent_id, inquiry_code and
+                // inquiry_id are never touched here.
+                Inquiry::where('id', $item['id'])->update(array_merge($sharedFields, $itemFields));
+
+            } else {
+
+                // New item — copy the entire first inquiry row and only
+                // override the item-related fields (plus the quote-level
+                // fields being set on this request).
+                $newInquiry = $firstInquiry->replicate();
+
+                $newInquiry->fill(array_merge($sharedFields, $itemFields, [
+                    'parent_id'      => $newParentId,
+                    'inquiry_code'   => $firstInquiry->inquiry_code,
+                    'inquiry_id'     => $firstInquiry->inquiry_id,
+                    'user_id'        => $firstInquiry->user_id,
+                    'created_by'     => Auth::id(),
+                    'created_at'     => now(),
+                ]));
+
+                $newInquiry->save();
+            }
         }
 
         DB::commit();
@@ -660,7 +710,7 @@ public function convertToprincipalqutation(Request $request, $id)
             'errors' => $e->errors()
         ], 422);
 
-    } catch (\Exception $e) {
+    } catch (\Throwable $e) {
 
         DB::rollBack();
 
@@ -672,11 +722,5 @@ public function convertToprincipalqutation(Request $request, $id)
         ], 500);
     }
 }
-
-
-
-
-
-
 
 }
