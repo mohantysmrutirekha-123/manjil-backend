@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\Opportunity;
 use App\Models\Inquiry;
+use App\Models\Item;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -939,81 +940,163 @@ class OpportunityController extends Controller
 
 
 
-public function convertOpportunityToPrincipalQuotation(Request $request, $id)
+public function convertOpportunityToPrincipalQuotation(Request $request)
 {
     DB::beginTransaction();
 
     try {
 
-        $firstInquiry = Inquiry::find($id);
-
-        if (!$firstInquiry) {
-            return response()->json([
-                'status' => 404,
-                'message' => 'Inquiry not found.'
-            ], 404);
-        }
-
-        if ($firstInquiry->user_id != Auth::id() && Auth::user()->role != 'admin') {
-            return response()->json([
-                'status' => 403,
-                'message' => 'Unauthorized.'
-            ], 403);
-        }
-
         $validated = $request->validate([
-            'principal_quote_no'   => 'required|string|max:255',
-            'principal_quote_date' => 'required|date',
-            'customer_id'          => 'required|exists:users,id',
-            'principal_id'         => 'nullable|exists:users,id',
-            'status'               => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
-            'items'                => 'required|array|min:1',
-            'items.*.id'           => 'required|exists:inquiries,id',
-            'items.*.price'        => 'required|numeric|min:0'
+            'opportunity_id'               => 'required|exists:opportunities,id',
+            'principal_quote_no'           => 'required|string|max:255',
+            'principal_quote_date'         => 'required|date',
+            'customer_id'                  => 'required|exists:users,id',
+            'principal_id'                 => 'nullable|exists:users,id',
+            'status'                       => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
+            'items'                        => 'required|array|min:1',
+            // 'items.*.opportunity_item_id'  => 'required|exists:opportunities,id',
+            'items.*.opportunity_item_id'  => 'nullable|integer|exists:opportunities,id',
+            'items.*.mat_code'             => 'required_without:items.*.opportunity_item_id|nullable|string|max:30',
+            'items.*.item_name'            => 'nullable|string|max:255',
+            'items.*.description'          => 'nullable|string',
+            'items.*.part_model_no'        => 'nullable|string|max:30',
+            'items.*.qty'                  => 'nullable|integer|min:1',
+            'items.*.date'                 => 'nullable|date',
+            'items.*.price'                => 'required|numeric|min:0',
         ]);
+
+        $opportunity = Opportunity::findOrFail($validated['opportunity_id']);
+
+        if ($opportunity->user_id != Auth::id() && Auth::user()->role != 'admin') {
+            DB::rollBack();
+            return response()->json(['status' => 403, 'message' => 'Unauthorized.'], 403);
+        }
+
+        $oppGroupParentId = $opportunity->parent_id ?? $opportunity->id;
+
+        // Resolve (or create) the Inquiry group this quotation belongs to.
+        $inquiryParentId = Opportunity::where('id', $oppGroupParentId)->value('converted_inquiry_id');
+
+        if (!$inquiryParentId) {
+            $last = Inquiry::orderBy('id', 'desc')->first();
+            $number = $last && $last->inquiry_code
+                ? intval(preg_replace('/\D/', '', $last->inquiry_code)) + 1
+                : 1;
+            $inquiryCode = 'INQ' . str_pad($number, 5, '0', STR_PAD_LEFT);
+
+            $headInquiry = Inquiry::create([
+                'parent_id'        => null,
+                'inquiry_code'     => $inquiryCode,
+                'inquiry_date'     => now(),
+                'enquiry_type'     => 'principal_quotation',
+                'customer_id'      => $validated['customer_id'],
+                'principal_id'     => $validated['principal_id'] ?? null,
+                'concerned_person' => 'N/A',
+                'status'           => $validated['status'],
+                'user_id'          => Auth::id(),
+                'created_by'       => Auth::id(),
+                'updated_by'       => Auth::id(),
+            ]);
+            $headInquiry->update(['parent_id' => $headInquiry->id]);
+
+            $inquiryParentId = $headInquiry->id;
+
+            Opportunity::where('id', $oppGroupParentId)->update(['converted_inquiry_id' => $inquiryParentId]);
+        }
+
+        $headInquiryRow = Inquiry::find($inquiryParentId);
 
         foreach ($validated['items'] as $item) {
 
-            Inquiry::where('id', $item['id'])->update([
-                'enquiry_type'         => 'principal_quotation',
-                'principal_quote_no'   => $validated['principal_quote_no'],
-                'principal_quote_date' => $validated['principal_quote_date'],
-                'customer_id'          => $validated['customer_id'],
-                'principal_id'         => $validated['principal_id'],
-                'price'                => $item['price'],
-                'status'               => $validated['status'],
-                'updated_by'           => Auth::id(),
-            ]);
+            // $oppItem = Opportunity::find($item['opportunity_item_id']);
+
+            // $inquiryRow = $oppItem->converted_inquiry_id
+            //     ? Inquiry::find($oppItem->converted_inquiry_id)
+            //     : null;
+
+            $oppItem = !empty($item['opportunity_item_id'])
+                ? Opportunity::find($item['opportunity_item_id'])
+                : null;
+
+            $inquiryRow = ($oppItem && $oppItem->converted_inquiry_id)
+                ? Inquiry::find($oppItem->converted_inquiry_id)
+                : null;
+
+            if ($inquiryRow) {
+                $inquiryRow->update([
+                    'enquiry_type'         => 'principal_quotation',
+                    'principal_quote_no'   => $validated['principal_quote_no'],
+                    'principal_quote_date' => $validated['principal_quote_date'],
+                    'customer_id'          => $validated['customer_id'],
+                    'principal_id'         => $validated['principal_id'] ?? null,
+                    'price'                => $item['price'],
+                    'status'               => $validated['status'],
+                    'updated_by'           => Auth::id(),
+                ]);
+            } else {
+
+                $itemId = $oppItem->item_id ?? null;
+
+                if (!$itemId && !empty($item['mat_code'])) {
+                    $catalogItem = Item::firstOrCreate(
+                        ['mat_code' => $item['mat_code']],
+                        [
+                            'name'          => $item['item_name'] ?: $item['mat_code'],
+                            'part_model_no' => $item['part_model_no'] ?? '',
+                            'description'   => $item['description'] ?? '',
+                        ]
+                    );
+                    $catalogItem->fill([
+                        'name'          => !empty($item['item_name']) ? $item['item_name'] : $catalogItem->name,
+                        'description'   => $item['description'] ?? $catalogItem->description,
+                        'part_model_no' => $item['part_model_no'] ?? $catalogItem->part_model_no,
+                    ])->save();
+                    $itemId = $catalogItem->id;
+                }
+
+                $newInquiry = Inquiry::create([
+                    'parent_id'            => $inquiryParentId,
+                    'inquiry_code'         => $headInquiryRow->inquiry_code,
+                    'inquiry_id'           => $headInquiryRow->inquiry_id,
+                    'enquiry_type'         => 'principal_quotation',
+                    'customer_id'          => $validated['customer_id'],
+                    'principal_id'         => $validated['principal_id'] ?? null,
+                    'item_id'              => $itemId,
+                    'quantity'             => $item['qty'] ?? ($oppItem->quantity ?? null),
+                    'principal_quote_no'   => $validated['principal_quote_no'],
+                    'principal_quote_date' => $validated['principal_quote_date'],
+                    'price'                => $item['price'],
+                    'status'               => $validated['status'],
+                    'user_id'              => Auth::id(),
+                    'created_by'           => Auth::id(),
+                    'updated_by'           => Auth::id(),
+                ]);
+
+                if ($oppItem) {
+                    Opportunity::where('id', $oppItem->id)->update(['converted_inquiry_id' => $newInquiry->id]);
+                }
+            }
         }
 
         DB::commit();
 
         return response()->json([
-            'status' => 200,
-            'message' => 'Principal quotation converted successfully.'
+            'status'    => 200,
+            'message'   => 'Principal quotation converted successfully.',
+            'parent_id' => $inquiryParentId,
         ], 200);
 
     } catch (ValidationException $e) {
 
         DB::rollBack();
-
-        return response()->json([
-            'status' => 422,
-            'errors' => $e->errors()
-        ], 422);
+        return response()->json(['status' => 422, 'errors' => $e->errors()], 422);
 
     } catch (\Exception $e) {
 
         DB::rollBack();
-
         Log::error($e->getMessage());
-
-        return response()->json([
-            'status' => 500,
-            'message' => $e->getMessage()
-        ], 500);
+        return response()->json(['status' => 500, 'message' => $e->getMessage()], 500);
     }
-
 }
 
 

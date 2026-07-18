@@ -96,24 +96,66 @@ class CustomerQuoteController extends Controller
             |--------------------------------------------------------------------------
             */
 
-            foreach ($validated['items'] as $item) {
+        // foreach ($validated['items'] as $item) {
 
-                Inquiry::where('id', $item['id'])
-                    ->where('inquiry_code', $firstInquiry->inquiry_code)
-                    ->update([
-                        'enquiry_type'         => 'customer_quotation',
-                        'offer_type'           => $validated['offer_type'],
-                        'quotation_no'         => $quotationNo,
-                        'budgetary_no'         => $budgetaryNo,
-                        'quantity_quoted'      => $validated['quantity_quoted'],
-                        'validity_period'      => $validated['validity_period'],
-                        'customer_quote_date' => $validated['customer_quote_date'],
-                        'price'                => $item['price'],
-                        'status'               => $validated['status'],
-                        'updated_by'           => Auth::id(),
-                        'updated_at'           => now(),
-                    ]);
-            }
+        //     Inquiry::where('id', $item['id'])
+        //         ->where('inquiry_code', $firstInquiry->inquiry_code)
+        //         ->update([
+        //             'enquiry_type'         => 'customer_quotation',
+        //             'offer_type'           => $validated['offer_type'],
+        //             'quotation_no'         => $quotationNo,
+        //             'budgetary_no'         => $budgetaryNo,
+        //             'quantity_quoted'      => $validated['quantity_quoted'],
+        //             'validity_period'      => $validated['validity_period'],
+        //             'customer_quote_date' => $validated['customer_quote_date'],
+        //             'price'                => $item['price'],
+        //             'status'               => $validated['status'],
+        //             'updated_by'           => Auth::id(),
+        //             'updated_at'           => now(),
+        //         ]);
+        // }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Update the group's head/parent row too — customerquotationList()
+        | only matches rows whose OWN enquiry_type is customer_quotation, and
+        | the head row is self-referencing (parent_id == id) but is not
+        | included in $validated['items'], so without this the whole group
+        | stays invisible on that list even though items were converted.
+        |--------------------------------------------------------------------------
+        */
+
+        $parentId = $firstInquiry->parent_id ?? $firstInquiry->id;
+
+        Inquiry::where('parent_id', $parentId)->update([
+            'enquiry_type'         => 'customer_quotation',
+            'offer_type'           => $validated['offer_type'],
+            'quotation_no'         => $quotationNo,
+            'budgetary_no'         => $budgetaryNo,
+            'quantity_quoted'      => $validated['quantity_quoted'],
+            'validity_period'      => $validated['validity_period'],
+            'customer_quote_date' => $validated['customer_quote_date'],
+            'status'               => $validated['status'],
+            'updated_by'           => Auth::id(),
+            'updated_at'           => now(),
+        ]);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Update Inquiry Items
+        |--------------------------------------------------------------------------
+        */
+
+        foreach ($validated['items'] as $item) {
+
+            Inquiry::where('id', $item['id'])
+                ->where('inquiry_code', $firstInquiry->inquiry_code)
+                ->update([
+                    'price'      => $item['price'],
+                    'updated_by' => Auth::id(),
+                    'updated_at' => now(),
+                ]);
+        }
 
             DB::commit();
 
@@ -167,13 +209,15 @@ class CustomerQuoteController extends Controller
 
             foreach ($enquiries as $enquiry) {
 
-                // Get all child items for this enquiry
-                $items = Inquiry::with([
-                    'item:id,name,mat_code,part_model_no,description'
-                ])
-                ->where('parent_id', $enquiry->id)
-                ->whereIn('enquiry_type', ['customer_quotation', 'Customer_PO', 'Negotiation','Customer_PO', 'PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'])
-                ->get();
+            // Get all child items for this enquiry
+            $items = Inquiry::with([
+                'item:id,name,mat_code,part_model_no,description'
+            ])
+            ->where('parent_id', $enquiry->id)
+            ->where('id', '!=', $enquiry->id)
+            //  ->where('enquiry_type', 'customer_quotation')
+            ->whereIn('enquiry_type', ['customer_quotation', 'Customer_PO', 'Negotiation','Customer_PO', 'PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'])
+            ->get();
 
                 $data[] = [
                     'id'                   => $enquiry->id,
