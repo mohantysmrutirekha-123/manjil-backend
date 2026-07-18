@@ -5,11 +5,13 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\Inquiry;
 use App\Models\Item;
+use App\Models\Item;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
@@ -101,6 +103,7 @@ public function store(Request $req)
             'status'           => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
             'date'             => 'required|date',
             'url'              => 'nullable|url',
+            'url'              => 'nullable|url',
         ]);
 
         $last = Inquiry::orderBy('id', 'desc')->first();
@@ -125,6 +128,7 @@ public function store(Request $req)
 
             'principal_id'     => $req->principal_id,
             'status'           => $req->status,
+            'url'              => $req->url,
             'url'              => $req->url,
 
             'user_id'          => Auth::id(),
@@ -541,11 +545,15 @@ public function inquiryDetails($parentId)
 
 
 public function convertToprincipalqutation(Request $request, $parentId)
+public function convertToprincipalqutation(Request $request, $parentId)
 {
     DB::beginTransaction();
 
     try {
 
+        // Look up the group by parent_id directly — any row belonging to
+        // this group works as the "first" reference row.
+        $firstInquiry = Inquiry::where('parent_id', $parentId)->first();
         // Look up the group by parent_id directly — any row belonging to
         // this group works as the "first" reference row.
         $firstInquiry = Inquiry::where('parent_id', $parentId)->first();
@@ -568,6 +576,7 @@ public function convertToprincipalqutation(Request $request, $parentId)
             'principal_quote_no'   => 'required|string|max:255',
             'principal_quote_date' => 'required|date',
             'status'               => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
+
 
             'items'                => 'required|array|min:1',
             'items.*.id'           => 'nullable|integer|exists:inquiries,id',
@@ -693,6 +702,32 @@ public function convertToprincipalqutation(Request $request, $parentId)
 
                 $newInquiry->save();
             }
+            ];
+
+            if (!empty($item['id']) && in_array($item['id'], $existingIds)) {
+
+                // Update existing row — parent_id, inquiry_code and
+                // inquiry_id are never touched here.
+                Inquiry::where('id', $item['id'])->update(array_merge($sharedFields, $itemFields));
+
+            } else {
+
+                // New item — copy the entire first inquiry row and only
+                // override the item-related fields (plus the quote-level
+                // fields being set on this request).
+                $newInquiry = $firstInquiry->replicate();
+
+                $newInquiry->fill(array_merge($sharedFields, $itemFields, [
+                    'parent_id'      => $newParentId,
+                    'inquiry_code'   => $firstInquiry->inquiry_code,
+                    'inquiry_id'     => $firstInquiry->inquiry_id,
+                    'user_id'        => $firstInquiry->user_id,
+                    'created_by'     => Auth::id(),
+                    'created_at'     => now(),
+                ]));
+
+                $newInquiry->save();
+            }
         }
 
         DB::commit();
@@ -712,6 +747,7 @@ public function convertToprincipalqutation(Request $request, $parentId)
             'errors' => $e->errors()
         ], 422);
 
+    } catch (\Throwable $e) {
     } catch (\Throwable $e) {
 
         DB::rollBack();
