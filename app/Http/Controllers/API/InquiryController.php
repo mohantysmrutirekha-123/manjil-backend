@@ -5,13 +5,11 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\Inquiry;
 use App\Models\Item;
-use App\Models\Item;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
@@ -545,7 +543,6 @@ public function inquiryDetails($parentId)
 
 
 public function convertToprincipalqutation(Request $request, $parentId)
-public function convertToprincipalqutation(Request $request, $parentId)
 {
     DB::beginTransaction();
 
@@ -702,7 +699,6 @@ public function convertToprincipalqutation(Request $request, $parentId)
 
                 $newInquiry->save();
             }
-            ];
 
             if (!empty($item['id']) && in_array($item['id'], $existingIds)) {
 
@@ -747,7 +743,6 @@ public function convertToprincipalqutation(Request $request, $parentId)
             'errors' => $e->errors()
         ], 422);
 
-    } catch (\Throwable $e) {
     } catch (\Throwable $e) {
 
         DB::rollBack();
