@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
 
 class PurchaseInvoiceController extends Controller
@@ -72,18 +73,20 @@ class PurchaseInvoiceController extends Controller
         }
     }
 
-    public function purchaseinvoiceList()
+    public function purchaseinvoiceList(Request $req)
     {
         try {
 
-            $enquiries = Inquiry::with([
+            $query = Inquiry::with([
                 'customer:id,name',
                 'item:id,name,mat_code,part_model_no,description'
             ])
             ->whereColumn('id', 'parent_id')
-            ->whereIn('enquiry_type', ['Purchase_Invoice','Sales_Invoice'])
-            ->latest()
-            ->get();
+            ->whereIn('enquiry_type', ['Purchase_Invoice','Sales_Invoice']);
+
+            $query = $this->applyFilters($query, $req);
+
+            $enquiries = $query->get();
 
             $data = [];
 
@@ -138,6 +141,84 @@ class PurchaseInvoiceController extends Controller
         }
     }
 
+    /**
+     * COMMON FILTER FUNCTION (REUSABLE)
+     */
+    private function applyFilters($query, Request $req)
+    {
+        // Search
+        if ($req->search) {
+            $query->where(function ($q) use ($req) {
+                $q->where('enquiry_type', 'like', "%{$req->search}%")
+                  ->orWhere('purchase_invoice_no', 'like', "%{$req->search}%")
+                  ->orWhere('purchase_payment_status', 'like', "%{$req->search}%");
+            });
+        }
+
+        // Date filter — manual range wins if both given
+        if ($req->from_date && $req->to_date) {
+            $query->whereBetween('created_at', [
+                $req->from_date . ' 00:00:00',
+                $req->to_date . ' 23:59:59'
+            ]);
+        } elseif ($req->period) {
+            [$start, $end] = $this->resolvePeriodRange($req->period);
+
+            if ($start && $end) {
+                $query->whereBetween('created_at', [$start, $end]);
+            }
+        }
+
+        // Sorting
+        $allowedSorts = ['id', 'invoice_date', 'payment_due_date', 'purchase_payment_status', 'created_at'];
+
+        $sortBy = in_array($req->sort_by, $allowedSorts) ? $req->sort_by : 'created_at';
+        $sortOrder = $req->sort_order === 'asc' ? 'asc' : 'desc';
+
+        $query->orderBy($sortBy, $sortOrder);
+
+        return $query;
+    }
+
+    /**
+     * Resolve a named period ('weekly','monthly','quarterly','yearly')
+     * into a [start, end] datetime string pair, anchored to "now".
+     */
+    private function resolvePeriodRange(string $period): array
+    {
+        $now = Carbon::now();
+
+        switch (strtolower($period)) {
+            case 'weekly':
+                $start = $now->copy()->startOfWeek();
+                $end   = $now->copy()->endOfWeek();
+                break;
+
+            case 'monthly':
+                $start = $now->copy()->startOfMonth();
+                $end   = $now->copy()->endOfMonth();
+                break;
+
+            case 'quarterly':
+                $start = $now->copy()->firstOfQuarter();
+                $end   = $now->copy()->lastOfQuarter();
+                break;
+
+            case 'yearly':
+                $start = $now->copy()->startOfYear();
+                $end   = $now->copy()->endOfYear();
+                break;
+
+            default:
+                return [null, null];
+        }
+
+        return [
+            $start->format('Y-m-d 00:00:00'),
+            $end->format('Y-m-d 23:59:59'),
+        ];
+    }
+
     public function update(Request $request, $id)
     {
         DB::beginTransaction();
@@ -186,173 +267,159 @@ class PurchaseInvoiceController extends Controller
         }
     }
 
+    public function store(Request $request)
+    {
+        DB::beginTransaction();
 
+        try {
 
+            $validated = $request->validate([
 
+                'inquiry_id'   => 'required|string|max:20',
+                'inquiry_code' => 'required|string|max:20',
 
+                'principal_id' => 'required|exists:users,id',
 
+                'purchase_invoice_no'               => 'required|string|max:255',
+                'invoice_date'                  => 'required|date',
+                'total_qty_ordered_principal'   => 'required|numeric|min:1',
+                'qty_received_principal'        => 'nullable|numeric|min:0',
+                'released_date'                 => 'nullable|date',
 
+                'status' => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
 
+                'principal_po_document' => 'nullable|file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120',
+            ]);
 
+            /*
+            |--------------------------------------------------------------------------
+            | Check Duplicate Inquiry ID
+            |--------------------------------------------------------------------------
+            */
 
+            if (Inquiry::where('inquiry_id', $validated['inquiry_id'])->exists()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Inquiry ID already exists.'
+                ], 422);
+            }
 
-public function store(Request $request)
-{
-    DB::beginTransaction();
+            /*
+            |--------------------------------------------------------------------------
+            | Check Duplicate Inquiry Code
+            |--------------------------------------------------------------------------
+            */
 
-    try {
+            if (Inquiry::where('inquiry_code', $validated['inquiry_code'])->exists()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Inquiry Code already exists.'
+                ], 422);
+            }
 
-        $validated = $request->validate([
+            /*
+            |--------------------------------------------------------------------------
+            | Upload Principal PO Document
+            |--------------------------------------------------------------------------
+            */
 
-            'inquiry_id'   => 'required|string|max:20',
-            'inquiry_code' => 'required|string|max:20',
+            $document = null;
 
-            'principal_id' => 'required|exists:users,id',
+            if ($request->hasFile('principal_po_document')) {
 
-            'purchase_invoice_no'               => 'required|string|max:255',
-            'invoice_date'                  => 'required|date',
-            'total_qty_ordered_principal'   => 'required|numeric|min:1',
-            'qty_received_principal'        => 'nullable|numeric|min:0',
-            'released_date'                 => 'nullable|date',
+                $file = $request->file('principal_po_document');
 
-            'status' => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
+                $document = time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
 
-            'principal_po_document' => 'nullable|file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120',
-        ]);
+                $file->move(
+                    public_path('uploads/principal_po_documents'),
+                    $document
+                );
+            }
 
-        /*
-        |--------------------------------------------------------------------------
-        | Check Duplicate Inquiry ID
-        |--------------------------------------------------------------------------
-        */
+            /*
+            |--------------------------------------------------------------------------
+            | Calculate Pending Qty
+            |--------------------------------------------------------------------------
+            */
 
-        if (Inquiry::where('inquiry_id', $validated['inquiry_id'])->exists()) {
+            $totalQtyOrdered = $validated['total_qty_ordered_principal'];
+
+            $qtyReceived = $validated['qty_received_principal'] ?? 0;
+
+            $pendingQty = max(0, $totalQtyOrdered - $qtyReceived);
+
+            /*
+            |--------------------------------------------------------------------------
+            | Insert Record
+            |--------------------------------------------------------------------------
+            */
+
+            $inquiry = Inquiry::create([
+
+                'parent_id' => 0,
+
+                'inquiry_code' => $validated['inquiry_code'],
+                'inquiry_id'   => $validated['inquiry_id'],
+
+                'enquiry_type' => 'PO_Principal',
+
+                'principal_id' => $validated['principal_id'],
+
+                'status' => $validated['status'],
+
+                'po_principal_no' => $validated['po_principal_no'],
+
+                'promise_date' => $validated['promise_date'],
+
+                'total_qty_ordered_principal' => $totalQtyOrdered,
+
+                'qty_received_principal' => $qtyReceived,
+
+                'pending_qty_principal' => $pendingQty,
+
+                'released_date' => $validated['released_date'],
+
+                'principal_po_document' => $document,
+
+                'user_id' => Auth::id(),
+
+                'created_by' => Auth::id(),
+
+                'updated_by' => Auth::id(),
+            ]);
+
+            // Make self parent
+            $inquiry->update([
+                'parent_id' => $inquiry->id
+            ]);
+
+            DB::commit();
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Principal PO created successfully.',
+                'data' => $inquiry
+            ], 201);
+
+        } catch (ValidationException $e) {
+
+            DB::rollBack();
+
             return response()->json([
                 'status' => false,
-                'message' => 'Inquiry ID already exists.'
+                'errors' => $e->errors()
             ], 422);
-        }
 
-        /*
-        |--------------------------------------------------------------------------
-        | Check Duplicate Inquiry Code
-        |--------------------------------------------------------------------------
-        */
+        } catch (\Exception $e) {
 
-        if (Inquiry::where('inquiry_code', $validated['inquiry_code'])->exists()) {
+            DB::rollBack();
+
             return response()->json([
                 'status' => false,
-                'message' => 'Inquiry Code already exists.'
-            ], 422);
+                'message' => $e->getMessage()
+            ], 500);
         }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Upload Principal PO Document
-        |--------------------------------------------------------------------------
-        */
-
-        $document = null;
-
-        if ($request->hasFile('principal_po_document')) {
-
-            $file = $request->file('principal_po_document');
-
-            $document = time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
-
-            $file->move(
-                public_path('uploads/principal_po_documents'),
-                $document
-            );
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Calculate Pending Qty
-        |--------------------------------------------------------------------------
-        */
-
-        $totalQtyOrdered = $validated['total_qty_ordered_principal'];
-
-        $qtyReceived = $validated['qty_received_principal'] ?? 0;
-
-        $pendingQty = max(0, $totalQtyOrdered - $qtyReceived);
-
-        /*
-        |--------------------------------------------------------------------------
-        | Insert Record
-        |--------------------------------------------------------------------------
-        */
-
-        $inquiry = Inquiry::create([
-
-            'parent_id' => 0,
-
-            'inquiry_code' => $validated['inquiry_code'],
-            'inquiry_id'   => $validated['inquiry_id'],
-
-            'enquiry_type' => 'PO_Principal',
-
-            'principal_id' => $validated['principal_id'],
-
-            'status' => $validated['status'],
-
-            'po_principal_no' => $validated['po_principal_no'],
-
-            'promise_date' => $validated['promise_date'],
-
-            'total_qty_ordered_principal' => $totalQtyOrdered,
-
-            'qty_received_principal' => $qtyReceived,
-
-            'pending_qty_principal' => $pendingQty,
-
-            'released_date' => $validated['released_date'],
-
-            'principal_po_document' => $document,
-
-            'user_id' => Auth::id(),
-
-            'created_by' => Auth::id(),
-
-            'updated_by' => Auth::id(),
-        ]);
-
-        // Make self parent
-        $inquiry->update([
-            'parent_id' => $inquiry->id
-        ]);
-
-        DB::commit();
-
-        return response()->json([
-            'status' => true,
-            'message' => 'Principal PO created successfully.',
-            'data' => $inquiry
-        ], 201);
-
-    } catch (ValidationException $e) {
-
-        DB::rollBack();
-
-        return response()->json([
-            'status' => false,
-            'errors' => $e->errors()
-        ], 422);
-
-    } catch (\Exception $e) {
-
-        DB::rollBack();
-
-        return response()->json([
-            'status' => false,
-            'message' => $e->getMessage()
-        ], 500);
     }
-}
 
-
-
-
-    
 }

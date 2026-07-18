@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Inquiry;
 use App\Models\Item;
 use App\Models\User;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -172,36 +173,84 @@ public function store(Request $req)
     /**
      * COMMON FILTER FUNCTION (REUSABLE)
      */
-    private function applyFilters($query, Request $req)
-    {
-        // Search
-        if ($req->search) {
-            $query->where(function ($q) use ($req) {
-                $q->where('enquiry_type', 'like', "%{$req->search}%")
-                  ->orWhere('concerned_person', 'like', "%{$req->search}%")
-                  ->orWhere('concerned_area', 'like', "%{$req->search}%")
-                  ->orWhere('product_details', 'like', "%{$req->search}%");
-            });
-        }
-
-        // Date filter
-        if ($req->from_date && $req->to_date) {
-            $query->whereBetween('created_at', [
-                $req->from_date . ' 00:00:00',
-                $req->to_date . ' 23:59:59'
-            ]);
-        }
-
-        // Sorting
-        $allowedSorts = ['id', 'enquiry_type', 'status', 'created_at'];
-
-        $sortBy = in_array($req->sort_by, $allowedSorts) ? $req->sort_by : 'created_at';
-        $sortOrder = $req->sort_order === 'asc' ? 'asc' : 'desc';
-
-        $query->orderBy($sortBy, $sortOrder);
-
-        return $query;
+   /**
+ * COMMON FILTER FUNCTION (REUSABLE)
+ */
+private function applyFilters($query, Request $req)
+{
+    // Search
+    if ($req->search) {
+        $query->where(function ($q) use ($req) {
+            $q->where('enquiry_type', 'like', "%{$req->search}%")
+              ->orWhere('concerned_person', 'like', "%{$req->search}%")
+              ->orWhere('concerned_area', 'like', "%{$req->search}%")
+              ->orWhere('product_details', 'like', "%{$req->search}%");
+        });
     }
+
+    // Date filter — manual range wins if both given
+    if ($req->from_date && $req->to_date) {
+        $query->whereBetween('created_at', [
+            $req->from_date . ' 00:00:00',
+            $req->to_date . ' 23:59:59'
+        ]);
+    } elseif ($req->period) {
+        [$start, $end] = $this->resolvePeriodRange($req->period);
+
+        if ($start && $end) {
+            $query->whereBetween('created_at', [$start, $end]);
+        }
+    }
+
+    // Sorting
+    $allowedSorts = ['id', 'enquiry_type', 'status', 'created_at'];
+
+    $sortBy = in_array($req->sort_by, $allowedSorts) ? $req->sort_by : 'created_at';
+    $sortOrder = $req->sort_order === 'asc' ? 'asc' : 'desc';
+
+    $query->orderBy($sortBy, $sortOrder);
+
+    return $query;
+}
+
+/**
+ * Resolve a named period ('weekly','monthly','quarterly','yearly')
+ * into a [start, end] datetime string pair, anchored to "now".
+ */
+private function resolvePeriodRange(string $period): array
+{
+    $now = Carbon::now();
+
+    switch (strtolower($period)) {
+        case 'weekly':
+            $start = $now->copy()->startOfWeek();
+            $end   = $now->copy()->endOfWeek();
+            break;
+
+        case 'monthly':
+            $start = $now->copy()->startOfMonth();
+            $end   = $now->copy()->endOfMonth();
+            break;
+
+        case 'quarterly':
+            $start = $now->copy()->firstOfQuarter();
+            $end   = $now->copy()->lastOfQuarter();
+            break;
+
+        case 'yearly':
+            $start = $now->copy()->startOfYear();
+            $end   = $now->copy()->endOfYear();
+            break;
+
+        default:
+            return [null, null];
+    }
+
+    return [
+        $start->format('Y-m-d 00:00:00'),
+        $end->format('Y-m-d 23:59:59'),
+    ];
+}
 
     /**
      * My Inquiry (User)
@@ -315,83 +364,7 @@ public function inquiryDetails($parentId)
     ]);
 }
 
-      /**
-     * Update Inquiry
-     */
-   
-    //   public function update(Request $req, $id)
-    // {
-    //     try {
-    //         $inquiry = Inquiry::find($id);
-    //         if (!$inquiry) {
-    //             return response()->json([
-    //                 'status'=> 404,
-    //                 'message' => 'Inquiry not found'
-    //                 ], 404);
-    //         }
-
-    //         if ($inquiry->user_id != Auth::id() && Auth::user()->role !== 'admin') {
-    //             return response()->json([
-    //                 'status' => '403',
-    //                 'message' => 'Unauthorized'
-    //                 ], 403);
-    //         }
-
-    //         $req->validate([
-    //             'enquiry_type'     => 'sometimes|required|string|max:100',
-    //             'customer_ids'     => 'sometimes|required|array',
-    //             'customer_ids.*'   => 'exists:users,id',
-    //             'item_id' => 'sometimes|required|exists:items,id',
-    //             'concerned_person' => 'sometimes|required|string|max:255',
-    //             'concerned_area'   => 'nullable|string|max:255',
-    //             'product_details'  => 'sometimes|required|string',
-    //             'quantity'         => 'sometimes|required|integer|min:1',
-    //             'principal_id'     => 'sometimes|required|integer',
-    //             'status'           => 'required|in:Price Requested,Pending,Closed,Completed,Regret'
-    //         ]);
-
-    //         $oldData =  $inquiry->toArray();
-
-    //         $inquiry->update([
-    //             'enquiry_type'     => $req->enquiry_type ?? $inquiry->enquiry_type,
-    //             'customer_ids'     => $req->customer_ids ?? $inquiry->customer_ids,
-    //             'item_id'          => $req->item_id ?? $inquiry->item_id,
-    //             'concerned_person' => $req->concerned_person ?? $inquiry->concerned_person,
-    //             'concerned_area'   => $req->concerned_area ?? $inquiry->concerned_area,
-    //             'product_details'  => $req->product_details ?? $inquiry->product_details,
-    //             'quantity'         => $req->quantity ?? $inquiry->quantity,
-    //             'principal_id'     => $req->principal_id ?? $inquiry->principal_id,
-    //             'status'           => $req->status ?? $inquiry->status,
-    //             'updated_by'       => Auth::id()
-    //         ]);
-
-    //         // Audit log
-    //         saveLog('UPDATE_INQUIRY', 'Inquiry', [
-    //             'old' => $oldData,
-    //             'new' => $inquiry
-    //         ]);
-
-    //         return response()->json([
-    //             'status' => 200,
-    //             'message' => 'Inquiry updated successfully',
-    //             'data'    => $inquiry
-    //         ]);
-
-    //     } catch (ValidationException $e) {
-    //         return response()->json([
-    //             'status' => 422,
-    //             'message' => 'Validation failed',
-    //             'errors'  => $e->errors()
-    //         ], 422);
-
-    //     } catch (\Exception $e) {
-    //         Log::error('Inquiry update error: '.$e->getMessage());
-    //         return response()->json([
-    //             'status' => 500,
-    //             'message' => 'Failed to update inquiry. Please try again later.'
-    //         ], 500);
-    //     }
-    // }
+    
 
     public function update(Request $req, $id)
     {
@@ -421,10 +394,11 @@ public function inquiryDetails($parentId)
                 'concerned_person'  => 'sometimes|required|string|max:255',
                 'concerned_area'    => 'nullable|string|max:255',
                 'status'            => 'sometimes|required|in:Price Requested,Pending,Closed,Completed,Regret',
+                'url'               => 'nullable|url',
                 'date'              => 'sometimes|required|date',
-                'items'             => 'sometimes|array|min:1',
+                'items'             => 'sometimes|array',
                 'items.*.item_id'   => 'required_with:items|exists:items,id',
-                'items.*.quantity'  => 'required_with:items|integer|min:1',
+                'items.*.quantity'  => 'integer',
                 'items.*.date'      => 'nullable|date',
             ]);
 
@@ -442,6 +416,7 @@ public function inquiryDetails($parentId)
                 'concerned_area'   => $req->concerned_area ?? $inquiry->concerned_area,
                 'principal_id'     => $req->principal_id ?? $inquiry->principal_id,
                 'status'           => $req->status ?? $inquiry->status,
+                'url'              => $req->url ?? $inquiry->url,
                 'updated_by'       => Auth::id(),
             ];
 

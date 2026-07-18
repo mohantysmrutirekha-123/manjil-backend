@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
 
 class SalesInvoiceController extends Controller
@@ -71,18 +72,20 @@ class SalesInvoiceController extends Controller
         }
     }
 
-    public function sellinvoiceList()
+    public function sellinvoiceList(Request $req)
     {
         try {
 
-            $enquiries = Inquiry::with([
+            $query = Inquiry::with([
                 'customer:id,name',
                 'item:id,name,mat_code,part_model_no,description'
             ])
             ->whereColumn('id', 'parent_id')
-            ->whereIn('enquiry_type', ['Sales_Invoice'])
-            ->latest()
-            ->get();
+            ->whereIn('enquiry_type', ['Sales_Invoice']);
+
+            $query = $this->applyFilters($query, $req);
+
+            $enquiries = $query->get();
 
             $data = [];
 
@@ -110,7 +113,6 @@ class SalesInvoiceController extends Controller
                     'total_selling_value'    => $enquiry->total_selling_value,
                     'pending_qty_after_bill' => $enquiry->pending_qty_after_bill,
                     'sales_invoice_status'   => $enquiry->sales_invoice_status,
-                   
 
                     'items' => $items->map(function ($row) {
                         return [
@@ -134,6 +136,84 @@ class SalesInvoiceController extends Controller
         } catch (\Exception $e) {
             return response()->json(['status' => false, 'message' => $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * COMMON FILTER FUNCTION (REUSABLE)
+     */
+    private function applyFilters($query, Request $req)
+    {
+        // Search
+        if ($req->search) {
+            $query->where(function ($q) use ($req) {
+                $q->where('enquiry_type', 'like', "%{$req->search}%")
+                  ->orWhere('sales_invoice_no', 'like', "%{$req->search}%")
+                  ->orWhere('sales_invoice_status', 'like', "%{$req->search}%");
+            });
+        }
+
+        // Date filter — manual range wins if both given
+        if ($req->from_date && $req->to_date) {
+            $query->whereBetween('created_at', [
+                $req->from_date . ' 00:00:00',
+                $req->to_date . ' 23:59:59'
+            ]);
+        } elseif ($req->period) {
+            [$start, $end] = $this->resolvePeriodRange($req->period);
+
+            if ($start && $end) {
+                $query->whereBetween('created_at', [$start, $end]);
+            }
+        }
+
+        // Sorting
+        $allowedSorts = ['id', 'sales_invoice_date', 'sales_invoice_status', 'created_at'];
+
+        $sortBy = in_array($req->sort_by, $allowedSorts) ? $req->sort_by : 'created_at';
+        $sortOrder = $req->sort_order === 'asc' ? 'asc' : 'desc';
+
+        $query->orderBy($sortBy, $sortOrder);
+
+        return $query;
+    }
+
+    /**
+     * Resolve a named period ('weekly','monthly','quarterly','yearly')
+     * into a [start, end] datetime string pair, anchored to "now".
+     */
+    private function resolvePeriodRange(string $period): array
+    {
+        $now = Carbon::now();
+
+        switch (strtolower($period)) {
+            case 'weekly':
+                $start = $now->copy()->startOfWeek();
+                $end   = $now->copy()->endOfWeek();
+                break;
+
+            case 'monthly':
+                $start = $now->copy()->startOfMonth();
+                $end   = $now->copy()->endOfMonth();
+                break;
+
+            case 'quarterly':
+                $start = $now->copy()->firstOfQuarter();
+                $end   = $now->copy()->lastOfQuarter();
+                break;
+
+            case 'yearly':
+                $start = $now->copy()->startOfYear();
+                $end   = $now->copy()->endOfYear();
+                break;
+
+            default:
+                return [null, null];
+        }
+
+        return [
+            $start->format('Y-m-d 00:00:00'),
+            $end->format('Y-m-d 23:59:59'),
+        ];
     }
 
     public function update(Request $request, $id)
