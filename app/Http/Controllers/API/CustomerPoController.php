@@ -36,12 +36,12 @@ class CustomerPoController extends Controller
             }
 
             $validated = $request->validate([
-                'customer_po_no'        => 'required|string|max:255',
-                'customer_due_date'     => 'required|date',
-                'customer_qty_order'    => 'required|numeric|min:1',
-                'me_ref'                => 'required|string|max:255',
+                'customer_po_no'        => 'nullable|string|max:255',
+                'customer_due_date'     => 'nullable|date',
+                'customer_qty_order'    => 'nullable|numeric|min:1',
+                'me_ref'                => 'nullable|string|max:255',
                 'pending_qty'           => 'nullable|numeric|min:0',
-                'status'                => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
+                'status'                => 'nullable|in:Checked,Not Checked',
                 'customer_pdo_document' => 'nullable|file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120',
                 'item_ids'               => 'required|array|min:1',
                 'item_ids.*'             => 'required|exists:inquiries,id',
@@ -115,63 +115,106 @@ class CustomerPoController extends Controller
         }
     }
 
-    public function customerpoList(Request $req)
-    {
-        try {
+   public function customerpoList()
+{
+    try {
 
-            $query = Inquiry::with([
-                'customer:id,name',
+        $stages = ['Customer_PO', 'PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'];
+
+        // Anchor rows only (id === parent_id) — one enquiry group each.
+        //
+        // NOTE: previously this only matched when the ANCHOR row itself
+        // had moved to one of $stages. But convertTocustomerpo() only
+        // updates the specific item(s) selected via item_ids — it never
+        // touches the anchor row unless the anchor happens to be among
+        // them. So converting a non-anchor item made the whole enquiry
+        // silently vanish from this list even though the converted item
+        // genuinely exists — same class of bug already fixed in
+        // principalquotationList()/customerquotationList()/negotiationList().
+        // orWhereHas('children') closes that gap.
+        $enquiries = Inquiry::with([
+            'customer:id,name',
+            'item:id,name,mat_code,part_model_no,description'
+        ])
+        ->whereColumn('id', 'parent_id')
+        ->where(function ($q) use ($stages) {
+            $q->whereIn('enquiry_type', $stages)
+              ->orWhereHas('children', function ($cq) use ($stages) {
+                  $cq->whereIn('enquiry_type', $stages);
+              });
+        })
+        ->latest()
+        ->get();
+
+        $data = [];
+
+        foreach ($enquiries as $enquiry) {
+
+            // All Customer-PO-stage-or-later items across every
+            // conversion batch for this enquiry.
+            $items = Inquiry::with([
                 'item:id,name,mat_code,part_model_no,description'
             ])
-            ->whereColumn('id', 'parent_id')
-            ->whereIn('enquiry_type', ['Customer_PO', 'PO_Principal', 'Sales_Invoice', 'Purchase_Invoice']);
+            ->where('parent_id', $enquiry->id)
+            ->whereIn('enquiry_type', $stages)
+            ->get();
 
-            $query = $this->applyFilters($query, $req);
+            if ($items->isEmpty()) {
+                continue;
+            }
 
-            $enquiries = $query->get();
+            // Items converted together in one convertTocustomerpo() call
+            // get the same customer_po_no + customer_due_date written onto
+            // them at once, so that pair identifies a batch. `status`
+            // intentionally excluded — same reasoning as every other
+            // stage: editing/converting one item's status shouldn't
+            // fracture the batch it belongs to.
+            $batches = $items->groupBy(function ($row) {
+                return $row->customer_po_no . '|' . $row->customer_due_date;
+            });
 
-            $data = [];
+            foreach ($batches as $batchItems) {
 
-            foreach ($enquiries as $enquiry) {
-
-                // Get all child items for this enquiry
-                $items = Inquiry::with([
-                    'item:id,name,mat_code,part_model_no,description'
-                ])
-                ->where('parent_id', $enquiry->id)
-                ->whereIn('enquiry_type', ['Customer_PO', 'PO_Principal','Sales_Invoice', 'Purchase_Invoice'])
-                ->get();
+                // Use an item that's ACTUALLY in this batch as the source
+                // of truth for the row's fields — never the enquiry
+                // anchor directly. customer_po_no/customer_due_date/
+                // me_ref/status/etc. are only ever written onto the
+                // converted items themselves, not onto the anchor row, so
+                // reading them off $enquiry returned null/stale data
+                // whenever the anchor wasn't among the converted items.
+                $first = $batchItems->first();
 
                 $data[] = [
-                    'id'                   => $enquiry->id,
-                    'parent_id'            => $enquiry->parent_id,
-                    'inquiry_id'           => $enquiry->inquiry_id,
-                    'inquiry_code'         => $enquiry->inquiry_code,
-                    'enquiry_type'         => $enquiry->enquiry_type,
-                    'customer_id'          => $enquiry->customer_id,
-                    'customer_name'        => optional($enquiry->customer)->name,
-                    'principal_id'         => $enquiry->principal_id,
-                    'principal_quote_no'   => $enquiry->principal_quote_no,
-                    'principal_quote_date' => $enquiry->principal_quote_date,
-                    'offer_type'         => $enquiry->offer_type,
-                    'quantity_quoted'    => $enquiry->quantity_quoted,
-                    'validity_period'    => $enquiry->validity_period,
-                    'negotiation_details' => $enquiry->negotiation_details,
-                    'follow_notes'        => $enquiry->follow_notes,
-                    'discussion_dates'    => $enquiry->discussion_dates,
-                    'revised_value'       => $enquiry->revised_value,
-                    'price'                => $enquiry->price,
-                    'status'               => $enquiry->status,
-                    'quotation_no'         => $enquiry->quotation_no,
-                    'budgetary_no'          => $enquiry->budgetary_no,
-                    'customer_po_no'       => $enquiry->customer_po_no,
-                    'customer_due_date'    => $enquiry->customer_due_date,
-                    'customer_qty_order'   => $enquiry->customer_qty_order,
-                    'me_ref'               => $enquiry->me_ref,
-                    'pending_qty'          => $enquiry->pending_qty,
-                    'customer_pdo_document'=> $enquiry->customer_pdo_document,
+                    'id'                    => $first->id, // an item in this batch — used for edit/update actions
+                    'parent_id'             => $enquiry->id,
+                    'inquiry_id'            => $enquiry->inquiry_id,
+                    'inquiry_code'          => $enquiry->inquiry_code,
+                    'enquiry_type'          => $first->enquiry_type,
+                    'customer_id'           => $enquiry->customer_id,
+                    'customer_name'         => optional($enquiry->customer)->name,
+                    'principal_id'          => $first->principal_id,
+                    'principal_quote_no'    => $first->principal_quote_no,
+                    'principal_quote_date'  => $first->principal_quote_date,
+                    'offer_type'            => $first->offer_type,
+                    'quantity_quoted'       => $first->quantity_quoted,
+                    'validity_period'       => $first->validity_period,
+                    'negotiation_details'   => $first->negotiation_details,
+                    'follow_notes'          => $first->follow_notes,
+                    'discussion_dates'      => $first->discussion_dates,
+                    'revised_value'         => $first->revised_value,
+                    'price'                 => $batchItems->sum('price'),
+                    'status'                => $first->status,
+                    'quotation_no'          => $first->quotation_no,
+                    'budgetary_no'          => $first->budgetary_no,
+                    'customer_po_no'        => $first->customer_po_no,
+                    'customer_due_date'     => $first->customer_due_date,
+                    'customer_qty_order'    => $first->customer_qty_order,
+                    'me_ref'                => $first->me_ref,
+                    'pending_qty'           => $first->pending_qty,
+                    'customer_pdo_document' => $first->customer_pdo_document,
 
-                    'items' => $items->map(function ($row) {
+
+                    'items' => $batchItems->map(function ($row) {
 
                         return [
                             'id'            => $row->id,
@@ -184,26 +227,28 @@ class CustomerPoController extends Controller
                             'price'         => $row->price,
                             'status'        => $row->status,
                             'date'          => optional($row->created_at)->format('Y-m-d'),
+                            'isConverted'   => $row->enquiry_type !== 'Customer_PO',
                         ];
 
                     })->values()
                 ];
             }
-
-            return response()->json([
-                'status'  => true,
-                'message' => 'Customer PO List',
-                'data'    => $data
-            ], 200);
-
-        } catch (\Exception $e) {
-
-            return response()->json([
-                'status'  => false,
-                'message' => $e->getMessage()
-            ], 500);
         }
+
+        return response()->json([
+            'status'  => true,
+            'message' => 'Customer PO List',
+            'data'    => $data
+        ], 200);
+
+    } catch (\Exception $e) {
+
+        return response()->json([
+            'status'  => false,
+            'message' => $e->getMessage()
+        ], 500);
     }
+}
 
     /**
      * COMMON FILTER FUNCTION (REUSABLE)

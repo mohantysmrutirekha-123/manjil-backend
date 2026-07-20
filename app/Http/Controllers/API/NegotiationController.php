@@ -93,57 +93,104 @@ class NegotiationController extends Controller
         }
     }
 
-    public function negotiationList(Request $req)
-    {
-        try {
+   public function negotiationList()
+{
+    try {
 
-            $query = Inquiry::with([
-                'customer:id,name',
+        $stages = ['Negotiation', 'Customer_PO', 'PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'];
+
+        // Anchor rows only (id === parent_id) — one enquiry group each.
+        //
+        // NOTE: previously this only matched when the ANCHOR row itself
+        // had moved to one of $stages. But convertTonegotiation() only
+        // updates the specific item(s) the user selects — it never
+        // touches the anchor row unless the anchor happens to be one of
+        // the selected items. So converting a single non-anchor item
+        // (e.g. item "c" while the anchor is still "d"/"a" sitting at an
+        // earlier stage) made the whole enquiry silently vanish from this
+        // list, even though the converted item genuinely exists. The
+        // orWhereHas('children') clause (already used by
+        // principalquotationList()/customerquotationList()) fixes this:
+        // an enquiry shows up if EITHER the anchor OR any of its children
+        // have reached one of these stages.
+        $enquiries = Inquiry::with([
+            'customer:id,name',
+            'item:id,name,mat_code,part_model_no,description'
+        ])
+        ->whereColumn('id', 'parent_id')
+        ->where(function ($q) use ($stages) {
+            $q->whereIn('enquiry_type', $stages)
+              ->orWhereHas('children', function ($cq) use ($stages) {
+                  $cq->whereIn('enquiry_type', $stages);
+              });
+        })
+        ->latest()
+        ->get();
+
+        $data = [];
+
+        foreach ($enquiries as $enquiry) {
+
+            // All negotiation-stage-or-later items across every conversion
+            // batch for this enquiry.
+            $items = Inquiry::with([
                 'item:id,name,mat_code,part_model_no,description'
             ])
-            ->whereColumn('id', 'parent_id')
-            ->whereIn('enquiry_type', ['Negotiation', 'Customer_PO','PO_Principal', 'Sales_Invoice', 'Purchase_Invoice']);
+            ->where('parent_id', $enquiry->id)
+            ->whereIn('enquiry_type', $stages)
+            ->get();
 
-            $query = $this->applyFilters($query, $req);
+            if ($items->isEmpty()) {
+                continue;
+            }
 
-            $enquiries = $query->get();
+            // Items converted together in one convertTonegotiation() call
+            // get the same negotiation_details + discussion_dates written
+            // onto them at once, so that pair identifies a batch — the
+            // same way quotation_no/date identify a batch upstream.
+            // `status` intentionally excluded, for the same reason as the
+            // other stages: editing one item's status shouldn't fracture
+            // the batch it belongs to.
+            $batches = $items->groupBy(function ($row) {
+                return $row->negotiation_details . '|' . $row->discussion_dates;
+            });
 
-            $data = [];
+            foreach ($batches as $batchItems) {
 
-            foreach ($enquiries as $enquiry) {
-
-                // Get all child items for this enquiry
-                $items = Inquiry::with([
-                    'item:id,name,mat_code,part_model_no,description'
-                ])
-                ->where('parent_id', $enquiry->id)
-                ->whereIn('enquiry_type', ['Negotiation', 'Customer_PO','PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'])
-                ->get();
+                // Use an item that's ACTUALLY in this batch as the source
+                // of truth for the row's fields — never the enquiry
+                // anchor directly. negotiation_details/follow_notes/
+                // discussion_dates/revised_value/status/quotation_no are
+                // only ever written onto the converted items themselves,
+                // not onto the anchor row, so reading them off $enquiry
+                // returned null/stale data whenever the anchor wasn't
+                // among the converted items.
+                $first = $batchItems->first();
 
                 $data[] = [
-                    'id'                   => $enquiry->id,
-                    'parent_id'            => $enquiry->parent_id,
+                    'id'                   => $first->id, // an item in this batch — used for edit/update actions
+                    'parent_id'            => $enquiry->id,
                     'inquiry_id'           => $enquiry->inquiry_id,
                     'inquiry_code'         => $enquiry->inquiry_code,
-                    'enquiry_type'         => $enquiry->enquiry_type,
+                    'enquiry_type'         => $first->enquiry_type,
                     'customer_id'          => $enquiry->customer_id,
                     'customer_name'        => optional($enquiry->customer)->name,
-                    'principal_id'         => $enquiry->principal_id,
-                    'principal_quote_no'   => $enquiry->principal_quote_no,
-                    'principal_quote_date' => $enquiry->principal_quote_date,
-                    'offer_type'         => $enquiry->offer_type,
-                    'quantity_quoted'    => $enquiry->quantity_quoted,
-                    'validity_period'    => $enquiry->validity_period,
-                    'negotiation_details' => $enquiry->negotiation_details,
-                    'follow_notes'        => $enquiry->follow_notes,
-                    'discussion_dates'    => $enquiry->discussion_dates,
-                    'revised_value'       => $enquiry->revised_value,
-                    'price'                => $enquiry->price,
-                    'status'               => $enquiry->status,
-                    'quotation_no'         => $enquiry->quotation_no,
-                    'budgetary_no'          => $enquiry->budgetary_no,
+                    'principal_id'         => $first->principal_id,
+                    'principal_quote_no'   => $first->principal_quote_no,
+                    'principal_quote_date' => $first->principal_quote_date,
+                    'offer_type'           => $first->offer_type,
+                    'quantity_quoted'      => $first->quantity_quoted,
+                    'validity_period'      => $first->validity_period,
+                    'negotiation_details'  => $first->negotiation_details,
+                    'follow_notes'         => $first->follow_notes,
+                    'discussion_dates'     => $first->discussion_dates,
+                    'revised_value'        => $first->revised_value,
+                    'price'                => $batchItems->sum('price'),
+                    'status'               => $first->status,
+                    'quotation_no'         => $first->quotation_no,
+                    'budgetary_no'         => $first->budgetary_no,
 
-                    'items' => $items->map(function ($row) {
+                    'items' => $batchItems->map(function ($row) {
 
                         return [
                             'id'            => $row->id,
@@ -156,26 +203,28 @@ class NegotiationController extends Controller
                             'price'         => $row->price,
                             'status'        => $row->status,
                             'date'          => optional($row->created_at)->format('Y-m-d'),
+                            'isConverted'   => $row->enquiry_type !== 'Negotiation',
                         ];
 
                     })->values()
                 ];
             }
-
-            return response()->json([
-                'status'  => true,
-                'message' => 'Negotiation List',
-                'data'    => $data
-            ], 200);
-
-        } catch (\Exception $e) {
-
-            return response()->json([
-                'status'  => false,
-                'message' => $e->getMessage()
-            ], 500);
         }
+
+        return response()->json([
+            'status'  => true,
+            'message' => 'Negotiation List',
+            'data'    => $data
+        ], 200);
+
+    } catch (\Exception $e) {
+
+        return response()->json([
+            'status'  => false,
+            'message' => $e->getMessage()
+        ], 500);
     }
+}
 
     /**
      * COMMON FILTER FUNCTION (REUSABLE)

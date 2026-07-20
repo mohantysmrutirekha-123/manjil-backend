@@ -319,7 +319,8 @@ class PrincipalQuoteController extends Controller
                 'item:id,name,mat_code,part_model_no,description'
             ])
             ->where('parent_id', $enquiry->id)
-            ->where('id', '!=', $enquiry->id)   // NEW LINE — excludes the head row from its own items list
+            //->where('id', '!=', $enquiry->id)
+               // NEW LINE — excludes the head row from its own items list
             //  ->where('enquiry_type', 'principal_quotation')
             ->whereIn('enquiry_type', ['principal_quotation', 'customer_quotation', 'Customer_PO', 'Negotiation','Customer_PO', 'PO_Principal','Sales_Invoice', 'Purchase_Invoice'])
             ->get();
@@ -363,6 +364,7 @@ class PrincipalQuoteController extends Controller
                             'price'         => $row->price,
                             'status'        => $row->status,
                             'date'          => optional($row->created_at)->format('Y-m-d'),
+                               'is_converted'  => $row->enquiry_type !== 'principal_quotation',
                         ];
 
                     })->values()
@@ -481,13 +483,20 @@ class PrincipalQuoteController extends Controller
                 'updated_by'           => Auth::id(),
             ]);
 
-            foreach ($request->items as $item) {
+            // foreach ($request->items as $item) {
 
+            //     Inquiry::where('id', $item['id'])->update([
+            //         'price' => $item['price'],
+            //         'updated_by' => Auth::id(),
+            //     ]);
+            // }
+
+            foreach ($request->items ?? [] as $item) {
                 Inquiry::where('id', $item['id'])->update([
-                    'price' => $item['price'],
+                    'price' => $item['price'] ?? null,
                     'updated_by' => Auth::id(),
                 ]);
-            }
+             }
 
             DB::commit();
 

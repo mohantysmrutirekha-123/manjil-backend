@@ -113,6 +113,8 @@ class Inquiry extends Model
         'principal_po_document',
         // traceability back to the opportunity item this enquiry came from
         'source_opportunity_item_id',
+        'converted_customer_inquiry_id',
+        'source_principal_item_id',
         'url',
     ];
 
