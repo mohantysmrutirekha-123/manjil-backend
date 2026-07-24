@@ -86,92 +86,90 @@ class InquiryController extends Controller
     }
 
 public function store(Request $req)
-{
-    DB::beginTransaction();
+    {
+        DB::beginTransaction();
 
-    try {
+        try {
 
-        $req->validate([
-            'enquiry_type'     => 'required|string|max:100',
-            'inquiry_id'       => 'required|string|max:100',
-            'customer_id'      => 'required|exists:users,id',
-            'concerned_person' => 'required|string|max:255',
-            'concerned_area'   => 'nullable|string|max:255',
-            'principal_id'     => 'required|exists:users,id',
-            'status'           => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
-            'date'             => 'required|date',
-            'url'              => 'nullable|url',
-            'url'              => 'nullable|url',
-        ]);
+            $req->validate([
+                'enquiry_type'     => 'nullable|string|max:100',
+                'inquiry_id'       => 'nullable|string|max:100',
+                'customer_id'      => 'nullable|exists:users,id',
+                'concerned_person' => 'nullable|string|max:255',
+                'concerned_area'   => 'nullable|string|max:255',
+                'principal_id'     => 'exists:users,id',
+                'status'           => 'in:Price Requested,Pending,Closed,Completed,Regret',
+                'date'             => 'nullable|date',
+                'url'              => 'nullable|string|max:255',
+            ]);
 
-        $last = Inquiry::orderBy('id', 'desc')->first();
+            $last = Inquiry::orderBy('id', 'desc')->first();
 
-        $number = $last && $last->inquiry_code
-            ? intval(substr($last->inquiry_code, 3)) + 1
-            : 1;
+            $number = $last && $last->inquiry_code
+                ? intval(substr($last->inquiry_code, 3)) + 1
+                : 1;
 
-        $inquiryCode = 'INQ' . str_pad($number, 5, '0', STR_PAD_LEFT);
+            $inquiryCode = 'INQ' . str_pad($number, 5, '0', STR_PAD_LEFT);
 
-        $inquiry = Inquiry::create([
-            'parent_id'        => null,
-            'inquiry_id'       => $req->inquiry_id,
-            'inquiry_code'     => $inquiryCode,
-            'inquiry_date'     => $req->date,
+            $inquiry = Inquiry::create([
+                'parent_id'        => null,
+                'inquiry_id'       => $req->inquiry_id,
+                'inquiry_code'     => $inquiryCode,
+                'inquiry_date'     => $req->date,
 
-            'enquiry_type'     => $req->enquiry_type,
-            'customer_id'      => $req->customer_id,
+                'enquiry_type'     => $req->enquiry_type,
+                'customer_id'      => $req->customer_id,
 
-            'concerned_person' => $req->concerned_person,
-            'concerned_area'   => $req->concerned_area,
+                'concerned_person' => $req->concerned_person,
+                'concerned_area'   => $req->concerned_area,
 
-            'principal_id'     => $req->principal_id,
-            'status'           => $req->status,
-            'url'              => $req->url,
-            'url'              => $req->url,
+                'principal_id'     => $req->principal_id,
+                'status'           => $req->status,
+                'url'              => $req->url,
 
-            'user_id'          => Auth::id(),
-            'created_by'       => Auth::id(),
-            'updated_by'       => Auth::id()
-        ]);
+                'user_id'          => Auth::id(),
+                'created_by'       => Auth::id(),
+                'updated_by'       => Auth::id(),
+            ]);
 
-        // Single-row record → it is its own parent (no item children to group).
-        $inquiry->update([
-            'parent_id' => $inquiry->id
-        ]);
+            // Single-row record → it is its own parent (no item children to group).
+            $inquiry->update([
+                'parent_id' => $inquiry->id,
+            ]);
 
-        $parentId = $inquiry->id;
+            $parentId = $inquiry->id;
 
-        DB::commit();
+            DB::commit();
 
-        return response()->json([
-            'status' => 200,
-            'message' => 'Inquiry created successfully',
-            'inquiry_code' => $inquiryCode,
-            'parent_id' => $parentId
-        ]);
+            return response()->json([
+                'status' => 200,
+                'message' => 'Inquiry created successfully',
+                'inquiry_code' => $inquiryCode,
+                'parent_id' => $parentId,
+            ]);
 
-    } catch (ValidationException $e) {
+        } catch (ValidationException $e) {
 
-        DB::rollBack();
+            DB::rollBack();
 
-        return response()->json([
-            'status' => 422,
-            'message' => 'Validation failed',
-            'errors' => $e->errors()
-        ], 422);
+            return response()->json([
+                'status' => 422,
+                'message' => 'Validation failed',
+                'errors' => $e->errors(),
+            ], 422);
 
-    } catch (\Throwable $e) {
+        } catch (\Throwable $e) {
 
-        DB::rollBack();
+            DB::rollBack();
 
-        Log::error('Inquiry create error : ' . $e->getMessage());
+            Log::error('Inquiry create error : ' . $e->getMessage());
 
-        return response()->json([
-            'status' => 500,
-            'message' => 'Failed to create inquiry'
-        ], 500);
+            return response()->json([
+                'status' => 500,
+                'message' => 'Failed to create inquiry',
+            ], 500);
+        }
     }
-}
     /**
      * COMMON FILTER FUNCTION (REUSABLE)
      */
@@ -428,30 +426,41 @@ public function inquiryDetails($parentId)
             // Update / add / remove item lines if provided
             if ($req->has('items') && is_array($req->items) && count($req->items) > 0) {
                 $existingRows = Inquiry::where('parent_id', $parentId)->get();
+                $existingRowsById = $existingRows->keyBy('id');
+                $keptIds = [];
 
-                foreach ($req->items as $index => $item) {
-                    if (isset($existingRows[$index])) {
-                        $existingRows[$index]->update([
-                            'item_id'  => $item['item_id'],
-                            'quantity' => $item['quantity'],
-                            'inquiry_date' => $item['date'] ?? $existingRows[$index]->inquiry_date,
+                foreach ($req->items as $item) {
+
+                    $existingRow = !empty($item['id'])
+                        ? $existingRowsById->get($item['id'])
+                        : null;
+
+                    if ($existingRow) {
+                        $existingRow->update([
+                            'item_id'      => $item['item_id'],
+                            'quantity'     => $item['quantity'],
+                            'inquiry_date' => $item['date'] ?? $existingRow->inquiry_date,
                         ]);
+
+                        $keptIds[] = $existingRow->id;
+
                     } else {
-                        Inquiry::create(array_merge($sharedFields, [
-                            'parent_id'  => $parentId,
-                            'item_id'    => $item['item_id'],
-                            'quantity'   => $item['quantity'],
+                        $newRow = Inquiry::create(array_merge($sharedFields, [
+                            'parent_id'    => $parentId,
+                            'item_id'      => $item['item_id'],
+                            'quantity'     => $item['quantity'],
                             'inquiry_date' => $item['date'] ?? $sharedFields['inquiry_date'],
-                            'user_id'    => $inquiry->user_id,
-                            'created_by' => Auth::id(),
+                            'user_id'      => $inquiry->user_id,
+                            'created_by'   => Auth::id(),
                         ]));
+
+                        $keptIds[] = $newRow->id;
                     }
                 }
 
-                if ($existingRows->count() > count($req->items)) {
-                    $existingRows->slice(count($req->items))
-                        ->each(fn ($row) => $row->delete());
-                }
+                $existingRows
+                    ->reject(fn ($row) => in_array($row->id, $keptIds))
+                    ->each(fn ($row) => $row->delete());
             }
 
             $inquiry->refresh();
@@ -551,9 +560,6 @@ public function convertToprincipalqutation(Request $request, $parentId)
         // Look up the group by parent_id directly — any row belonging to
         // this group works as the "first" reference row.
         $firstInquiry = Inquiry::where('parent_id', $parentId)->first();
-        // Look up the group by parent_id directly — any row belonging to
-        // this group works as the "first" reference row.
-        $firstInquiry = Inquiry::where('parent_id', $parentId)->first();
 
         if (!$firstInquiry) {
             return response()->json([
@@ -570,43 +576,26 @@ public function convertToprincipalqutation(Request $request, $parentId)
         }
 
         $validated = $request->validate([
-            'principal_quote_no'   => 'required|string|max:255',
+            // 'principal_quote_no'   => 'string|max:255',
+            'principal_quote_no'   => 'nullable|string|max:255',
             'principal_quote_date' => 'required|date',
-            'status'               => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
-
+            // 'status'               => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
+            'status'               => 'required|in:Price Requested,Price Received,Completed',
 
             'items'                => 'required|array|min:1',
             'items.*.id'           => 'nullable|integer|exists:inquiries,id',
-            'items.*.price'         => 'required|numeric|min:0',
+            'items.*.price'         => 'nullable|numeric|min:0',
             'items.*.item_id'       => 'nullable|integer|exists:items,id',
-            'items.*.mat_code'      => 'required|string|max:30',
+            'items.*.mat_code'      => 'nullable|string|max:30',
             'items.*.item_name'     => 'nullable|string|max:255',
             'items.*.description'   => 'nullable|string',
             'items.*.part_model_no' => 'nullable|string|max:30',
             'items.*.qty'           => 'nullable|integer|min:1',
             'items.*.date'          => 'nullable|date',
-            
         ]);
-
-        // Same parent_id, always — no new group is ever created.
-        // $newParentId = $parentId;
-
-        // $existingRowsById = Inquiry::whereIn('id', collect($validated['items'])->pluck('id')->filter())
-        //     ->get()
-        //     ->keyBy('id');
 
         // Same parent_id, always — no new group is ever created.
         $newParentId = $parentId;
-
-        // Ensure the parent/reference row (the one the list page reads
-        // principal_quote_no / principal_quote_date / status from) always gets
-        // these fields too — not just item rows explicitly present in items[].
-        Inquiry::where('parent_id', $newParentId)->update([
-            'principal_quote_no'   => $validated['principal_quote_no'],
-            'principal_quote_date' => $validated['principal_quote_date'],
-            'status'                => $validated['status'],
-            'updated_by'            => Auth::id(),
-        ]);
 
         $existingRowsById = Inquiry::whereIn('id', collect($validated['items'])->pluck('id')->filter())
             ->get()
@@ -623,18 +612,14 @@ public function convertToprincipalqutation(Request $request, $parentId)
             }
 
             if (empty($catalogItem)) {
-                // $catalogItem = Item::firstOrCreate(
-                //     ['mat_code' => $item['mat_code']],
-                //     ['name' => $item['mat_code']]
-                // );
                 $catalogItem = Item::firstOrCreate(
-                ['mat_code' => $item['mat_code']],
-                [
-                    'name'          => $item['item_name'] ?: $item['mat_code'],
-                    'part_model_no' => $item['part_model_no'] ?? '',
-                    'description'   => $item['description'] ?? '',
-                ]
-            );
+                    ['mat_code' => $item['mat_code']],
+                    [
+                        'name'          => $item['item_name'] ?: $item['mat_code'],
+                        'part_model_no' => $item['part_model_no'] ?? '',
+                        'description'   => $item['description'] ?? '',
+                    ]
+                );
             }
 
             $catalogItem->fill([
@@ -663,12 +648,12 @@ public function convertToprincipalqutation(Request $request, $parentId)
                 'price'        => $item['price'],
                 'quantity'     => $item['qty'] ?? null,
                 'inquiry_date' => $item['date'] ?? null,
-                
             ];
 
             $sharedFields = [
                 'enquiry_type'         => 'principal_quotation',
-                'principal_quote_no'   => $validated['principal_quote_no'],
+                // 'principal_quote_no'   => $validated['principal_quote_no'],
+                'principal_quote_no'   => $validated['principal_quote_no'] ?? null,
                 'principal_quote_date' => $validated['principal_quote_date'],
                 'status'               => $validated['status'],
                 'updated_by'           => Auth::id(),
@@ -677,8 +662,7 @@ public function convertToprincipalqutation(Request $request, $parentId)
 
             if (!empty($item['id']) && in_array($item['id'], $existingIds)) {
 
-                // Update existing row — parent_id, inquiry_code and
-                // inquiry_id are never touched here.
+                // Update only this specific row — no other siblings touched.
                 Inquiry::where('id', $item['id'])->update(array_merge($sharedFields, $itemFields));
 
             } else {
@@ -700,30 +684,6 @@ public function convertToprincipalqutation(Request $request, $parentId)
                 $newInquiry->save();
             }
 
-            if (!empty($item['id']) && in_array($item['id'], $existingIds)) {
-
-                // Update existing row — parent_id, inquiry_code and
-                // inquiry_id are never touched here.
-                Inquiry::where('id', $item['id'])->update(array_merge($sharedFields, $itemFields));
-
-            } else {
-
-                // New item — copy the entire first inquiry row and only
-                // override the item-related fields (plus the quote-level
-                // fields being set on this request).
-                $newInquiry = $firstInquiry->replicate();
-
-                $newInquiry->fill(array_merge($sharedFields, $itemFields, [
-                    'parent_id'      => $newParentId,
-                    'inquiry_code'   => $firstInquiry->inquiry_code,
-                    'inquiry_id'     => $firstInquiry->inquiry_id,
-                    'user_id'        => $firstInquiry->user_id,
-                    'created_by'     => Auth::id(),
-                    'created_at'     => now(),
-                ]));
-
-                $newInquiry->save();
-            }
         }
 
         DB::commit();

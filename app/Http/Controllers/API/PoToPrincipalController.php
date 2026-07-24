@@ -36,13 +36,15 @@ class PoToPrincipalController extends Controller
             }
 
             $validated = $request->validate([
-                'po_principal_no'              => 'required|string|max:255',
-                'promise_date'                 => 'required|date',
-                'total_qty_ordered_principal'  => 'required|numeric|min:1',
+                'po_principal_no'              => 'nullable|string|max:255',
+                
+                'total_qty_ordered_principal'  => 'nullable|numeric|min:1',
                 'qty_received_principal'       => 'nullable|numeric|min:0',
                 'released_date'                => 'nullable|date',
-                'po_principal_status'          => 'required|in:PENDING,DISPATCH PARTIAL,DISPATCH FULL',
+               
                 'principal_po_document'        => 'nullable|file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120',
+                'item_ids'                     => 'nullable|array',
+                'item_ids.*'                   => 'integer|exists:inquiries,id',
             ]);
 
             $document = null;
@@ -60,17 +62,33 @@ class PoToPrincipalController extends Controller
             $qtyReceived     = $validated['qty_received_principal'] ?? 0;
             $pendingQty      = max(0, $totalQtyOrdered - $qtyReceived);
 
-            Inquiry::where('inquiry_code', $firstInquiry->inquiry_code)
+            // Only the items actually selected for this conversion — falls
+            // back to just the clicked row ($id) if the frontend didn't
+            // send item_ids, instead of touching every row that happens to
+            // share this enquiry's inquiry_code.
+            $itemIds = !empty($validated['item_ids']) ? $validated['item_ids'] : [$id];
+            // ADD THIS BLOCK
+$availableQty = (float) Inquiry::whereIn('id', $itemIds)->sum('customer_qty_order');
+
+if ($totalQtyOrdered > $availableQty) {
+    DB::rollBack();
+    return response()->json([
+        'status'  => false,
+        'message' => "Ordered qty ({$totalQtyOrdered}) exceeds the qty available to convert ({$availableQty}) for the selected items.",
+    ], 422);
+}
+
+            Inquiry::whereIn('id', $itemIds)
                 ->update([
                     'enquiry_type'                 => 'PO_Principal',
                     'po_principal_no'              => $validated['po_principal_no'],
-                    'promise_date'                 => $validated['promise_date'],
+                   
                     'total_qty_ordered_principal'  => $totalQtyOrdered,
                     'qty_received_principal'       => $qtyReceived,
                     'pending_qty_principal'        => $pendingQty,
                     'released_date'                => $validated['released_date'] ?? null,
                     'principal_po_document'        => $document,
-                    'po_principal_status'          => $validated['po_principal_status'],
+                    
                     'updated_by'                   => Auth::id(),
                     'updated_at'                   => now(),
                 ]);
@@ -105,74 +123,121 @@ class PoToPrincipalController extends Controller
         }
     }
 
-    public function poprincipalList(Request $req)
+      public function poprincipalList()
     {
         try {
 
-            $query = Inquiry::with([
-                'customer:id,name',
-                'item:id,name,mat_code,part_model_no,description'
-            ])
-            ->whereColumn('id', 'parent_id')
-            ->whereIn('enquiry_type', ['PO_Principal', 'Sales_Invoice', 'Purchase_Invoice']);
+          // AFTER
+$stages = ['PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'];
 
-            $query = $this->applyFilters($query, $req);
-
-            $enquiries = $query->get();
+$enquiries = Inquiry::with([
+    'customer:id,name',
+    'item:id,name,mat_code,part_model_no,description'
+])
+->whereColumn('id', 'parent_id')
+->where(function ($q) use ($stages) {
+    $q->whereIn('enquiry_type', $stages)
+      ->orWhereHas('children', function ($cq) use ($stages) {
+          $cq->whereIn('enquiry_type', $stages);
+      });
+})
+->latest()
+->get();
 
             $data = [];
 
-            foreach ($enquiries as $enquiry) {
+            // foreach ($enquiries as $enquiry) {
 
-                $items = Inquiry::with([
-                    'item:id,name,mat_code,part_model_no,description'
-                ])
-                ->where('parent_id', $enquiry->id)
-                ->whereIn('enquiry_type', ['PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'])
-                ->get();
+            //     $items = Inquiry::with(['item:id,name,mat_code,part_model_no,description'])
+            //     ->where('parent_id', $enquiry->id)
+            //     ->whereIn('enquiry_type', $stages)
+            //     ->get();
 
-                $data[] = [
-                    'id'                           => $enquiry->id,
-                    'parent_id'                    => $enquiry->parent_id,
-                    'inquiry_id'                   => $enquiry->inquiry_id,
-                    'inquiry_code'                 => $enquiry->inquiry_code,
-                    'enquiry_type'                 => $enquiry->enquiry_type,
-                    'customer_id'                  => $enquiry->customer_id,
-                    'customer_name'                => optional($enquiry->customer)->name,
-                    'principal_id'                 => $enquiry->principal_id,
-                    'me_ref'                       => $enquiry->me_ref,
-                    'customer_po_no'               => $enquiry->customer_po_no,
-                    'customer_due_date'            => $enquiry->customer_due_date,
-                    'customer_qty_order'           => $enquiry->customer_qty_order,
-                    'pending_qty'                  => $enquiry->pending_qty,
-                    'po_principal_no'              => $enquiry->po_principal_no,
-                    'promise_date'                 => $enquiry->promise_date,
-                    'total_qty_ordered_principal'  => $enquiry->total_qty_ordered_principal,
-                    'qty_received_principal'       => $enquiry->qty_received_principal,
-                    'pending_qty_principal'        => $enquiry->pending_qty_principal,
-                    'released_date'                => $enquiry->released_date,
-                    'principal_po_document'        => $enquiry->principal_po_document,
-                    'po_principal_status'          => $enquiry->po_principal_status,
+            //     $data[] = [
+            //         'id'                           => $enquiry->id,
+            //         'parent_id'                    => $enquiry->parent_id,
+            //         'inquiry_id'                   => $enquiry->inquiry_id,
+            //         'inquiry_code'                 => $enquiry->inquiry_code,
+            //         'enquiry_type'                 => $enquiry->enquiry_type,
+            //         'customer_id'                  => $enquiry->customer_id,
+            //         'customer_name'                => optional($enquiry->customer)->name,
+            //         'principal_id'                 => $enquiry->principal_id,
+            //         'me_ref'                       => $enquiry->me_ref,
+            //         'customer_po_no'               => $enquiry->customer_po_no,
+            //         'customer_due_date'            => $enquiry->customer_due_date,
+            //         'customer_qty_order'           => $enquiry->customer_qty_order,
+            //         'pending_qty'                  => $enquiry->pending_qty,
+            //         'po_principal_no'              => $enquiry->po_principal_no,
+            //         'promise_date'                 => $enquiry->promise_date,
+            //         'total_qty_ordered_principal'  => $enquiry->total_qty_ordered_principal,
+            //         'qty_received_principal'       => $enquiry->qty_received_principal,
+            //         'pending_qty_principal'        => $enquiry->pending_qty_principal,
+            //         'released_date'                => $enquiry->released_date,
+            //         'principal_po_document'        => $enquiry->principal_po_document,
+            //         'status'          => $enquiry->status,
 
-                    'items' => $items->map(function ($row) {
+           foreach ($enquiries as $enquiry) {
 
-                        return [
-                            'id'            => $row->id,
-                            'item_id'       => $row->item_id,
-                            'material_code' => optional($row->item)->mat_code,
-                            'item_name'     => optional($row->item)->name,
-                            'description'   => optional($row->item)->description,
-                            'part_model_no' => optional($row->item)->part_model_no,
-                            'quantity'      => $row->quantity,
-                            'price'         => $row->price,
-                            'po_principal_status'        => $row->po_principal_status,
-                            'date'          => optional($row->created_at)->format('Y-m-d'),
-                        ];
+    $items = Inquiry::with(['item:id,name,mat_code,part_model_no,description'])
+        ->where('parent_id', $enquiry->id)
+        ->whereIn('enquiry_type', $stages)
+        ->get();
 
-                    })->values()
+    if ($items->isEmpty()) {
+        continue;
+    }
+
+    // Group by po_principal_no so each separate conversion gets its own row.
+    $batches = $items->groupBy(function ($row) {
+        return $row->po_principal_no;
+    });
+
+    foreach ($batches as $batchItems) {
+
+        $sourceRow = $batchItems->first();
+
+        $data[] = [
+            'id'                           => $sourceRow->id,
+            'parent_id'                    => $enquiry->id,
+            'inquiry_id'                   => $enquiry->inquiry_id,
+            'inquiry_code'                 => $enquiry->inquiry_code,
+            'enquiry_type'                 => $sourceRow->enquiry_type,
+            'customer_id'                  => $enquiry->customer_id,
+            'customer_name'                => optional($enquiry->customer)->name,
+            'principal_id'                 => $sourceRow->principal_id,
+            'me_ref'                       => $enquiry->me_ref,
+            'customer_po_no'               => $enquiry->customer_po_no,
+            'customer_due_date'            => $enquiry->customer_due_date,
+            'customer_qty_order'           => $enquiry->customer_qty_order,
+            'pending_qty'                  => $enquiry->pending_qty,
+            'po_principal_no'              => $sourceRow->po_principal_no,
+            'promise_date'                 => $sourceRow->promise_date,
+            'total_qty_ordered_principal'  => $sourceRow->total_qty_ordered_principal,
+            'qty_received_principal'       => $sourceRow->qty_received_principal,
+            'pending_qty_principal'        => $sourceRow->pending_qty_principal,
+            'released_date'                => $sourceRow->released_date,
+            'principal_po_document'        => $sourceRow->principal_po_document,
+            'status'                       => $sourceRow->status,
+
+            'items' => $batchItems->map(function ($row) {
+                return [
+                    'id'            => $row->id,
+                    'item_id'       => $row->item_id,
+                    'material_code' => optional($row->item)->mat_code,
+                    'item_name'     => optional($row->item)->name,
+                    'description'   => optional($row->item)->description,
+                    'part_model_no' => optional($row->item)->part_model_no,
+                    'customer_qty_order' => $row->customer_qty_order, 
+                    'quantity'      => $row->quantity,
+                    'price'         => $row->price,
+                    'status'        => $row->status,
+                    'date'          => optional($row->created_at)->format('Y-m-d'),
+                    'isConverted'   => $row->enquiry_type !== 'PO_Principal',
                 ];
-            }
-
+            })->values(),
+        ];
+    }
+}
             return response()->json([
                 'status'  => true,
                 'message' => 'PO to Principal List',
@@ -275,17 +340,17 @@ class PoToPrincipalController extends Controller
 
             $validated = $request->validate([
                 'po_principal_no'              => 'required|string|max:255',
-                'promise_date'                 => 'required|date',
+                'promise_date'                 => 'nullable|date',
                 'total_qty_ordered_principal'  => 'required|numeric|min:1',
                 'qty_received_principal'       => 'nullable|numeric|min:0',
                 'released_date'                => 'nullable|date',
-                'po_principal_status'          => 'required|in:PENDING,DISPATCH PARTIAL,DISPATCH FULL',
+                'status'                       => 'required|in:PENDING,DISPATCH PARTIAL,DISPATCH FULL',
                 'principal_po_document'        => 'nullable|file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120',
+                'item_ids'                     => 'nullable|array',
+                'item_ids.*'                   => 'integer|exists:inquiries,id',
             ]);
 
             $inquiry = Inquiry::findOrFail($id);
-
-            $parentId = $inquiry->parent_id;
 
             $document = $inquiry->principal_po_document;
 
@@ -302,15 +367,30 @@ class PoToPrincipalController extends Controller
             $qtyReceived     = $validated['qty_received_principal'] ?? 0;
             $pendingQty      = max(0, $totalQtyOrdered - $qtyReceived);
 
-            Inquiry::where('parent_id', $parentId)->update([
+            // Same fix as convertTopoprincipal(): scope to the items that
+            // actually belong to this PO-to-Principal batch, not every row
+            // under the enquiry's parent_id.
+            $itemIds = !empty($validated['item_ids']) ? $validated['item_ids'] : [$id];
+            // ADD THIS BLOCK
+$availableQty = (float) Inquiry::whereIn('id', $itemIds)->sum('customer_qty_order');
+
+if ($totalQtyOrdered > $availableQty) {
+    DB::rollBack();
+    return response()->json([
+        'success' => false,
+        'message' => "Ordered qty ({$totalQtyOrdered}) exceeds the qty available to convert ({$availableQty}) for the selected items.",
+    ], 422);
+}
+
+            Inquiry::whereIn('id', $itemIds)->update([
                 'po_principal_no'              => $validated['po_principal_no'],
-                'promise_date'                 => $validated['promise_date'],
+                // 'promise_date'                 => $validated['promise_date'],
                 'total_qty_ordered_principal'  => $totalQtyOrdered,
-                'qty_received_principal'       => $qtyReceived,
-                'pending_qty_principal'        => $pendingQty,
+                'qty_received_principal'       => $qtyReceived ?? null,
+                'pending_qty_principal'        => $pendingQty ?? null,
                 'released_date'                => $validated['released_date'] ?? null,
-                'principal_po_document'        => $document,
-                'po_principal_status'          => $validated['po_principal_status'],
+                'principal_po_document'        => $document ?? null,
+                'status'                       => $validated['status'],
                 'updated_by'                   => Auth::id(),
                 'updated_at'                   => now(),
             ]);

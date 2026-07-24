@@ -114,6 +114,7 @@ class Inquiry extends Model
         // traceability back to the opportunity item this enquiry came from
         'source_opportunity_item_id',
         'url',
+        'inquiry_date'
     ];
 
     //  User relation

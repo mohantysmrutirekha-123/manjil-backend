@@ -13,132 +13,82 @@ use Illuminate\Support\Carbon;
 class CustomerQuoteController extends Controller
 {
 
-    public function convertTocustomerQuotation(Request $request, $id)
-    {
-        DB::beginTransaction();
+   public function convertTocustomerQuotation(Request $request, $id)
+{
+    DB::beginTransaction();
 
-        try {
+    try {
 
-            $firstInquiry = Inquiry::find($id);
+        $firstInquiry = Inquiry::find($id);
 
-            if (!$firstInquiry) {
-                return response()->json([
-                    'status' => false,
-                    'message' => 'Inquiry not found.'
-                ], 404);
-            }
+        if (!$firstInquiry) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Inquiry not found.'
+            ], 404);
+        }
 
-            if ($firstInquiry->user_id != Auth::id() && Auth::user()->role != 'admin') {
-                return response()->json([
-                    'status' => false,
-                    'message' => 'Unauthorized.'
-                ], 403);
-            }
+        if ($firstInquiry->user_id != Auth::id() && Auth::user()->role != 'admin') {
+            return response()->json([
+                'status' => false,
+                'message' => 'Unauthorized.'
+            ], 403);
+        }
 
-            $validated = $request->validate([
-                'offer_type'           => 'required|in:Quotation,Budgetary Offer',
-                'quantity_quoted'      => 'required|numeric|min:1',
-                'validity_period'      => 'required|string|max:100',
-                'customer_quote_date' => 'required|date',
-                'status'               => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
-                'items'                => 'required|array|min:1',
-                'items.*.id'           => 'required|exists:inquiries,id',
-                'items.*.price'        => 'required|numeric|min:0'
-            ]);
-
-            /*
-            |--------------------------------------------------------------------------
-            | Generate Quotation No / Budgetary No
-            |--------------------------------------------------------------------------
-            */
-
-            $quotationNo = null;
-            $budgetaryNo = null;
-
-            if ($validated['offer_type'] == 'Quotation') {
-
-                $lastQuotation = Inquiry::whereNotNull('quotation_no')
-                    ->orderByDesc('id')
-                    ->first();
-
-                if ($lastQuotation && $lastQuotation->quotation_no) {
-
-                    $lastNo = (int) preg_replace('/[^0-9]/', '', $lastQuotation->quotation_no);
-
-                    $quotationNo = 'QN-' . str_pad($lastNo + 1, 6, '0', STR_PAD_LEFT);
-
-                } else {
-
-                    $quotationNo = 'QN-000001';
-                }
-
-            } elseif ($validated['offer_type'] == 'Budgetary Offer') {
-
-                $lastBudgetary = Inquiry::whereNotNull('budgetary_no')
-                    ->orderByDesc('id')
-                    ->first();
-
-                if ($lastBudgetary && $lastBudgetary->budgetary_no) {
-
-                    $lastNo = (int) preg_replace('/[^0-9]/', '', $lastBudgetary->budgetary_no);
-
-                    $budgetaryNo = 'BO-' . str_pad($lastNo + 1, 6, '0', STR_PAD_LEFT);
-
-                } else {
-
-                    $budgetaryNo = 'BO-000001';
-                }
-            }
-
-            /*
-            |--------------------------------------------------------------------------
-            | Update Inquiry Items
-            |--------------------------------------------------------------------------
-            */
-
-        // foreach ($validated['items'] as $item) {
-
-        //     Inquiry::where('id', $item['id'])
-        //         ->where('inquiry_code', $firstInquiry->inquiry_code)
-        //         ->update([
-        //             'enquiry_type'         => 'customer_quotation',
-        //             'offer_type'           => $validated['offer_type'],
-        //             'quotation_no'         => $quotationNo,
-        //             'budgetary_no'         => $budgetaryNo,
-        //             'quantity_quoted'      => $validated['quantity_quoted'],
-        //             'validity_period'      => $validated['validity_period'],
-        //             'customer_quote_date' => $validated['customer_quote_date'],
-        //             'price'                => $item['price'],
-        //             'status'               => $validated['status'],
-        //             'updated_by'           => Auth::id(),
-        //             'updated_at'           => now(),
-        //         ]);
-        // }
+        $validated = $request->validate([
+            'offer_type'           => 'required|in:Quotation,Budgetary Offer',
+            'quantity_quoted'      => 'required|numeric|min:1',
+            'validity_period'      => 'required|string|max:100',
+            'customer_quote_date' => 'required|date',
+            'status'               => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
+            'items'                => 'required|array|min:1',
+            'items.*.id'           => 'required|exists:inquiries,id',
+            'items.*.price'        => 'required|numeric|min:0'
+        ]);
 
         /*
         |--------------------------------------------------------------------------
-        | Update the group's head/parent row too — customerquotationList()
-        | only matches rows whose OWN enquiry_type is customer_quotation, and
-        | the head row is self-referencing (parent_id == id) but is not
-        | included in $validated['items'], so without this the whole group
-        | stays invisible on that list even though items were converted.
+        | Generate Quotation No / Budgetary No
         |--------------------------------------------------------------------------
         */
 
-        $parentId = $firstInquiry->parent_id ?? $firstInquiry->id;
+        $quotationNo = null;
+        $budgetaryNo = null;
 
-        Inquiry::where('parent_id', $parentId)->update([
-            'enquiry_type'         => 'customer_quotation',
-            'offer_type'           => $validated['offer_type'],
-            'quotation_no'         => $quotationNo,
-            'budgetary_no'         => $budgetaryNo,
-            'quantity_quoted'      => $validated['quantity_quoted'],
-            'validity_period'      => $validated['validity_period'],
-            'customer_quote_date' => $validated['customer_quote_date'],
-            'status'               => $validated['status'],
-            'updated_by'           => Auth::id(),
-            'updated_at'           => now(),
-        ]);
+        if ($validated['offer_type'] == 'Quotation') {
+
+            $lastQuotation = Inquiry::whereNotNull('quotation_no')
+                ->orderByDesc('id')
+                ->first();
+
+            if ($lastQuotation && $lastQuotation->quotation_no) {
+
+                $lastNo = (int) preg_replace('/[^0-9]/', '', $lastQuotation->quotation_no);
+
+                $quotationNo = 'QN-' . str_pad($lastNo + 1, 6, '0', STR_PAD_LEFT);
+
+            } else {
+
+                $quotationNo = 'QN-000001';
+            }
+
+        } elseif ($validated['offer_type'] == 'Budgetary Offer') {
+
+            $lastBudgetary = Inquiry::whereNotNull('budgetary_no')
+                ->orderByDesc('id')
+                ->first();
+
+            if ($lastBudgetary && $lastBudgetary->budgetary_no) {
+
+                $lastNo = (int) preg_replace('/[^0-9]/', '', $lastBudgetary->budgetary_no);
+
+                $budgetaryNo = 'BO-' . str_pad($lastNo + 1, 6, '0', STR_PAD_LEFT);
+
+            } else {
+
+                $budgetaryNo = 'BO-000001';
+            }
+        }
 
         /*
         |--------------------------------------------------------------------------
@@ -151,126 +101,174 @@ class CustomerQuoteController extends Controller
             Inquiry::where('id', $item['id'])
                 ->where('inquiry_code', $firstInquiry->inquiry_code)
                 ->update([
-                    'price'      => $item['price'],
-                    'updated_by' => Auth::id(),
-                    'updated_at' => now(),
+                    'enquiry_type'         => 'customer_quotation',
+                    'offer_type'           => $validated['offer_type'],
+                    'quotation_no'         => $quotationNo,
+                    'budgetary_no'         => $budgetaryNo,
+                    'quantity_quoted'      => $validated['quantity_quoted'],
+                    'validity_period'      => $validated['validity_period'],
+                    'customer_quote_date' => $validated['customer_quote_date'],
+                    'price'                => $item['price'],
+                    'status'               => $validated['status'],
+                    'updated_by'           => Auth::id(),
+                    'updated_at'           => now(),
                 ]);
         }
 
-            DB::commit();
+        DB::commit();
 
-            return response()->json([
-                'status' => true,
-                'message' => 'Customer quotation converted successfully.',
-                'data' => [
-                    'quotation_no' => $quotationNo,
-                    'budgetary_no' => $budgetaryNo
-                ]
-            ], 200);
+        return response()->json([
+            'status' => true,
+            'message' => 'Customer quotation converted successfully.',
+            'data' => [
+                'quotation_no' => $quotationNo,
+                'budgetary_no' => $budgetaryNo
+            ]
+        ], 200);
 
-        } catch (ValidationException $e) {
+    } catch (ValidationException $e) {
 
-            DB::rollBack();
+        DB::rollBack();
 
-            return response()->json([
-                'status' => false,
-                'errors' => $e->errors()
-            ], 422);
+        return response()->json([
+            'status' => false,
+            'errors' => $e->errors()
+        ], 422);
 
-        } catch (\Exception $e) {
+    } catch (\Exception $e) {
 
-            DB::rollBack();
+        DB::rollBack();
 
-            Log::error($e->getMessage());
+        Log::error($e->getMessage());
 
-            return response()->json([
-                'status' => false,
-                'message' => $e->getMessage()
-            ], 500);
-        }
+        return response()->json([
+            'status' => false,
+            'message' => $e->getMessage()
+        ], 500);
     }
+}
 
-    public function customerquotationList(Request $req)
-    {
-        try {
-
-            $query = Inquiry::with([
-                'customer:id,name',
-                'item:id,name,mat_code,part_model_no,description'
-            ])
-            ->whereColumn('id', 'parent_id')
-            ->whereIn('enquiry_type', ['customer_quotation', 'Customer_PO', 'Negotiation','Customer_PO', 'PO_Principal', 'Sales_Invoice', 'Purchase_Invoice']);
-
-            $query = $this->applyFilters($query, $req);
-
-            $enquiries = $query->get();
-
-            $data = [];
-
-            foreach ($enquiries as $enquiry) {
-
-            // Get all child items for this enquiry
+public function customerquotationList(Request $req)
+{
+    try {
+ 
+        $stages = ['customer_quotation', 'Customer_PO', 'Negotiation', 'PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'];
+ 
+        // Anchor rows only (id === parent_id) — one enquiry group each.
+        $query = Inquiry::with([
+            'customer:id,name',
+            'item:id,name,mat_code,part_model_no,description'
+        ])
+        ->whereColumn('id', 'parent_id')
+        ->where(function ($q) use ($stages) {
+            $q->whereIn('enquiry_type', $stages)
+              ->orWhereHas('children', function ($cq) use ($stages) {
+                  $cq->whereIn('enquiry_type', $stages);
+              });
+        });
+ 
+        $query = $this->applyFilters($query, $req);
+ 
+        $enquiries = $query->get();
+ 
+        $data = [];
+ 
+        foreach ($enquiries as $enquiry) {
+ 
+            // All rows across every conversion batch for this enquiry —
+            // includes the anchor's own item row(s) plus any additional
+            // PO-batch rows created later.
             $items = Inquiry::with([
                 'item:id,name,mat_code,part_model_no,description'
             ])
             ->where('parent_id', $enquiry->id)
-            ->where('id', '!=', $enquiry->id)
-            //  ->where('enquiry_type', 'customer_quotation')
-            ->whereIn('enquiry_type', ['customer_quotation', 'Customer_PO', 'Negotiation','Customer_PO', 'PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'])
+            ->whereIn('enquiry_type', $stages)
             ->get();
-
-                $data[] = [
-                    'id'                   => $enquiry->id,
-                    'parent_id'            => $enquiry->parent_id,
-                    'inquiry_id'           => $enquiry->inquiry_id,
-                    'inquiry_code'         => $enquiry->inquiry_code,
-                    'enquiry_type'         => $enquiry->enquiry_type,
-                    'customer_id'          => $enquiry->customer_id,
-                    'customer_name'        => optional($enquiry->customer)->name,
-                    'principal_id'         => $enquiry->principal_id,
-                    'principal_quote_no'   => $enquiry->principal_quote_no,
-                    'customer_quote_date' => $enquiry->customer_quote_date,
-                    'offer_type'         => $enquiry->offer_type,
-                    'quantity_quoted'    => $enquiry->quantity_quoted,
-                    'validity_period'    => $enquiry->validity_period,
-                    'quotation_no'       => $enquiry->quotation_no,
-                    'budgetary_no'       => $enquiry->budgetary_no,
-                    'price'                => $enquiry->price,
-                    'status'               => $enquiry->status,
-
-                    'items' => $items->map(function ($row) {
-
-                        return [
-                            'id'            => $row->id,
-                            'item_id'       => $row->item_id,
-                            'material_code' => optional($row->item)->mat_code,
-                            'item_name'     => optional($row->item)->name,
-                            'description'   => optional($row->item)->description,
-                            'part_model_no' => optional($row->item)->part_model_no,
-                            'quantity'      => $row->quantity,
-                            'price'         => $row->price,
-                            'status'        => $row->status,
-                            'date'          => optional($row->created_at)->format('Y-m-d'),
-                        ];
-
-                    })->values()
-                ];
+ 
+            if ($items->isEmpty()) {
+                continue;
             }
-
-            return response()->json([
-                'status'  => true,
-                'message' => 'Customer Quotation List',
-                'data'    => $data
-            ], 200);
-
-        } catch (\Exception $e) {
-
-            return response()->json([
-                'status'  => false,
-                'message' => $e->getMessage()
-            ], 500);
+ 
+            // Aggregate PER ITEM (item_id) across every batch: quantity is
+            // the same value copied onto every row for that item, so we
+            // only take it once; customer_qty_order (converted qty) is
+            // SUMMED across every batch row for that item.
+            $perItem = $items->groupBy('item_id')->map(function ($rows) {
+                $sample    = $rows->first();
+                $quantity  = (float) $sample->quantity;
+                $converted = (float) $rows->sum('customer_qty_order');
+                $pending   = max(0, $quantity - $converted);
+ 
+                $status = $converted <= 0
+                    ? 'Not Converted'
+                    : ($pending <= 0 ? 'Converted' : 'Partially Converted');
+ 
+                return [
+                     'id'                 => $sample->id, 
+                    'item_id'            => $sample->item_id,
+                    'material_code'      => optional($sample->item)->mat_code,
+                    'item_name'          => optional($sample->item)->name,
+                    'description'        => optional($sample->item)->description,
+                    'part_model_no'      => optional($sample->item)->part_model_no,
+                    'quantity'           => $quantity,
+                    'customer_qty_order' => $converted,
+                    'pending_qty'        => $pending,
+                    'conversion_status'  => $status,
+                    'price'              => $rows->sum('price'),
+                    'date'               => optional($sample->created_at)->format('Y-m-d'),
+                ];
+            })->values();
+ 
+            $totalQuantity  = $perItem->sum('quantity');
+            $totalConverted = $perItem->sum('customer_qty_order');
+            $totalPending   = max(0, $totalQuantity - $totalConverted);
+ 
+            // Quotation-level header fields come from the ANCHOR row only.
+            $data[] = [
+                'id'                   => $enquiry->id,
+                'parent_id'            => $enquiry->id,
+                'inquiry_id'           => $enquiry->inquiry_id,
+                'inquiry_code'         => $enquiry->inquiry_code,
+                'enquiry_type'         => $enquiry->enquiry_type,
+                'customer_id'          => $enquiry->customer_id,
+                'customer_name'        => optional($enquiry->customer)->name,
+                'principal_id'         => $enquiry->principal_id,
+                'principal_quote_no'   => $enquiry->principal_quote_no,
+                'customer_quote_date'  => $enquiry->customer_quote_date,
+                'offer_type'           => $enquiry->offer_type,
+                'quantity_quoted'      => $enquiry->quantity_quoted,
+                'validity_period'      => $enquiry->validity_period,
+                'quotation_no'         => $enquiry->quotation_no,
+                'budgetary_no'         => $enquiry->budgetary_no,
+                'price'                => $perItem->sum('price'),
+                'status'               => $enquiry->status,
+             
+ 
+                // Summary totals for the QTY column — total converted vs.
+                // total quoted, across ALL items and ALL PO batches.
+                'total_quantity'        => $totalQuantity,
+                'total_converted_qty'   => $totalConverted,
+                'total_pending_qty'     => $totalPending,
+                'is_fully_converted'    => $totalPending <= 0,
+ 
+                'items' => $perItem,
+            ];
         }
+ 
+        return response()->json([
+            'status'  => true,
+            'message' => 'Customer Quotation List',
+            'data'    => $data
+        ], 200);
+ 
+    } catch (\Exception $e) {
+ 
+        return response()->json([
+            'status'  => false,
+            'message' => $e->getMessage()
+        ], 500);
     }
+}
 
     /**
      * COMMON FILTER FUNCTION (REUSABLE)

@@ -13,123 +13,144 @@ use Illuminate\Validation\ValidationException;
 
 class SalesInvoiceController extends Controller
 {
-    public function convertTosalesinvoice(Request $request, $id)
-    {
-        DB::beginTransaction();
+   public function convertTosalesinvoice(Request $request, $id)
+{
+    DB::beginTransaction();
 
-        try {
+    try {
 
-            $firstInquiry = Inquiry::find($id);
+        $firstInquiry = Inquiry::find($id);
 
-            if (!$firstInquiry) {
-                return response()->json(['status' => false, 'message' => 'Inquiry not found.'], 404);
-            }
+        if (!$firstInquiry) {
+            return response()->json(['status' => false, 'message' => 'Inquiry not found.'], 404);
+        }
 
-            if ($firstInquiry->user_id != Auth::id() && Auth::user()->role != 'admin') {
-                return response()->json(['status' => false, 'message' => 'Unauthorized.'], 403);
-            }
+        if ($firstInquiry->user_id != Auth::id() && Auth::user()->role != 'admin') {
+            return response()->json(['status' => false, 'message' => 'Unauthorized.'], 403);
+        }
 
-            $validated = $request->validate([
-                'sales_invoice_no'    => 'required|string|max:255',
-                'sales_invoice_date'  => 'required|date',
-                'gst_percent'         => 'nullable|numeric|min:0',
-                'qty_billed'          => 'required|numeric|min:1',
-                'total_selling_value' => 'required|numeric|min:0',
-                'sales_invoice_status'=> 'required|in:Generated,Issued,Paid',
+        $validated = $request->validate([
+            'item_ids'            => 'required|array|min:1',
+            'item_ids.*'          => 'integer|exists:inquiries,id',
+            'sales_invoice_no'    => 'required|string|max:255',
+            'sales_invoice_date'  => 'required|date',
+            'gst_percent'         => 'nullable|numeric|min:0',
+            'qty_billed'          => 'required|numeric|min:1',
+            'total_selling_value' => 'required|numeric|min:0',
+        ]);
+
+        $qtyOrderedTotal = (int) $firstInquiry->customer_qty_order;
+        $pendingAfterBill = max(0, $qtyOrderedTotal - $validated['qty_billed']);
+
+        Inquiry::where('inquiry_code', $firstInquiry->inquiry_code)
+            ->whereIn('id', $validated['item_ids'])
+            ->update([
+                'enquiry_type'           => 'Sales_Invoice',
+                'sales_invoice_no'       => $validated['sales_invoice_no'],
+                'sales_invoice_date'     => $validated['sales_invoice_date'],
+                'gst_percent'            => $validated['gst_percent'] ?? 0,
+                'qty_billed'             => $validated['qty_billed'],
+                'total_selling_value'    => $validated['total_selling_value'],
+                'pending_qty_after_bill' => $pendingAfterBill,
+                'updated_by'             => Auth::id(),
+                'updated_at'             => now(),
             ]);
 
-            $qtyOrderedTotal = (int) $firstInquiry->customer_qty_order;
-            $pendingAfterBill = max(0, $qtyOrderedTotal - $validated['qty_billed']);
+        DB::commit();
 
-            Inquiry::where('inquiry_code', $firstInquiry->inquiry_code)
-                ->update([
-                    'enquiry_type'           => 'Sales_Invoice',
-                    'sales_invoice_no'       => $validated['sales_invoice_no'],
-                    'sales_invoice_date'     => $validated['sales_invoice_date'],
-                    'gst_percent'            => $validated['gst_percent'] ?? 0,
-                    'qty_billed'             => $validated['qty_billed'],
-                    'total_selling_value'    => $validated['total_selling_value'],
-                    'pending_qty_after_bill' => $pendingAfterBill,
-                    'sales_invoice_status'   => $validated['sales_invoice_status'],
-                    'updated_by'             => Auth::id(),
-                    'updated_at'             => now(),
-                ]);
+        return response()->json([
+            'status'  => true,
+            'message' => 'Sales Invoice created successfully.',
+        ], 200);
 
-            DB::commit();
-
-            return response()->json([
-                'status'  => true,
-                'message' => 'Sales Invoice created successfully.',
-            ], 200);
-
-        } catch (ValidationException $e) {
-            DB::rollBack();
-            return response()->json(['status' => false, 'errors' => $e->errors()], 422);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            Log::error('Sales Invoice Error: ' . $e->getMessage());
-            return response()->json(['status' => false, 'message' => $e->getMessage()], 500);
-        }
+    } catch (ValidationException $e) {
+        DB::rollBack();
+        return response()->json(['status' => false, 'errors' => $e->errors()], 422);
+    } catch (\Exception $e) {
+        DB::rollBack();
+        Log::error('Sales Invoice Error: ' . $e->getMessage());
+        return response()->json(['status' => false, 'message' => $e->getMessage()], 500);
     }
+}
 
-    public function sellinvoiceList(Request $req)
+    public function sellinvoiceList()
     {
         try {
 
-            $query = Inquiry::with([
+            $stages = ['Sales_Invoice'];
+
+            $enquiries = Inquiry::with([
                 'customer:id,name',
                 'item:id,name,mat_code,part_model_no,description'
             ])
             ->whereColumn('id', 'parent_id')
-            ->whereIn('enquiry_type', ['Sales_Invoice']);
-
-            $query = $this->applyFilters($query, $req);
-
-            $enquiries = $query->get();
+            ->where(function ($q) use ($stages) {
+                $q->whereIn('enquiry_type', $stages)
+                  ->orWhereHas('children', function ($cq) use ($stages) {
+                      $cq->whereIn('enquiry_type', $stages);
+                  });
+            })
+            ->latest()
+            ->get();
 
             $data = [];
 
-            foreach ($enquiries as $enquiry) {
+           foreach ($enquiries as $enquiry) {
 
-                $items = Inquiry::with(['item:id,name,mat_code,part_model_no,description'])
-                    ->where('parent_id', $enquiry->id)
-                    ->whereIn('enquiry_type', ['Sales_Invoice'])
-                    ->get();
+    $items = Inquiry::with(['item:id,name,mat_code,part_model_no,description'])
+        ->where('parent_id', $enquiry->id)
+        ->whereIn('enquiry_type', $stages)
+        ->get();
 
-                $data[] = [
-                    'id'                     => $enquiry->id,
-                    'parent_id'              => $enquiry->parent_id,
-                    'inquiry_id'             => $enquiry->inquiry_id,
-                    'inquiry_code'           => $enquiry->inquiry_code,
-                    'enquiry_type'           => $enquiry->enquiry_type,
-                    'customer_id'            => $enquiry->customer_id,
-                    'customer_name'          => optional($enquiry->customer)->name,
-                    'principal_id'           => $enquiry->principal_id,
-                    'purchase_invoice_no'    => $enquiry->purchase_invoice_no,
-                    'sales_invoice_no'       => $enquiry->sales_invoice_no,
-                    'sales_invoice_date'     => $enquiry->sales_invoice_date,
-                    'gst_percent'            => $enquiry->gst_percent,
-                    'qty_billed'             => $enquiry->qty_billed,
-                    'total_selling_value'    => $enquiry->total_selling_value,
-                    'pending_qty_after_bill' => $enquiry->pending_qty_after_bill,
-                    'sales_invoice_status'   => $enquiry->sales_invoice_status,
+    if ($items->isEmpty()) {
+        continue;
+    }
 
-                    'items' => $items->map(function ($row) {
-                        return [
-                            'id'            => $row->id,
-                            'item_id'       => $row->item_id,
-                            'material_code' => optional($row->item)->mat_code,
-                            'item_name'     => optional($row->item)->name,
-                            'description'   => optional($row->item)->description,
-                            'part_model_no' => optional($row->item)->part_model_no,
-                            'quantity'      => $row->quantity,
-                            'price'         => $row->price,
-                            'sales_invoice_status'        => $row->sales_invoice_status,
-                            'date'          => optional($row->created_at)->format('Y-m-d'),
-                        ];
-                    })->values()
+    // Group by sales_invoice_no so each separate conversion gets its own row.
+    $batches = $items->groupBy(function ($row) {
+        return $row->sales_invoice_no;
+    });
+
+    foreach ($batches as $batchItems) {
+
+        $first = $batchItems->first();
+
+        $data[] = [
+            'id'                     => $first->id,
+            'parent_id'              => $enquiry->id,
+            'inquiry_id'             => $enquiry->inquiry_id,
+            'inquiry_code'           => $enquiry->inquiry_code,
+            'enquiry_type'           => $first->enquiry_type,
+            'customer_id'            => $enquiry->customer_id,
+            'customer_name'          => optional($enquiry->customer)->name,
+            'principal_id'           => $enquiry->principal_id,
+            'purchase_invoice_no'    => $first->purchase_invoice_no,
+            'sales_invoice_no'       => $first->sales_invoice_no,
+            'sales_invoice_date'     => $first->sales_invoice_date,
+            'gst_percent'            => $first->gst_percent,
+            'qty_billed'             => $first->qty_billed,
+            'total_selling_value'    => $batchItems->sum('total_selling_value'),
+            'pending_qty_after_bill' => $first->pending_qty_after_bill,
+            'status'                 => $first->status,
+
+            'items' => $batchItems->map(function ($row) {
+                return [
+                    'id'            => $row->id,
+                    'item_id'       => $row->item_id,
+                    'material_code' => optional($row->item)->mat_code,
+                    'item_name'     => optional($row->item)->name,
+                    'description'   => optional($row->item)->description,
+                    'part_model_no' => optional($row->item)->part_model_no,
+                    'quantity'      => $row->quantity,
+                    'price'         => $row->price,
+                    'status'        => $row->status,
+                    'date'          => optional($row->created_at)->format('Y-m-d'),
+                    'isConverted'   => $row->enquiry_type !== 'Sales_Invoice',
                 ];
-            }
+            })->values(),
+        ];
+    }
+}
 
             return response()->json(['status' => true, 'message' => 'Sales Invoice List', 'data' => $data], 200);
 
@@ -228,7 +249,7 @@ class SalesInvoiceController extends Controller
                 'gst_percent'          => 'nullable|numeric|min:0',
                 'qty_billed'           => 'required|numeric|min:1',
                 'total_selling_value'  => 'required|numeric|min:0',
-                'sales_invoice_status' => 'required|in:Generated,Issued,Paid',
+                'status' => 'required|in:Generated,Issued,Paid',
             ]);
 
             $inquiry = Inquiry::findOrFail($id);
@@ -244,7 +265,7 @@ class SalesInvoiceController extends Controller
                 'qty_billed'             => $validated['qty_billed'],
                 'total_selling_value'    => $validated['total_selling_value'],
                 'pending_qty_after_bill' => $pendingAfterBill,
-                'sales_invoice_status'   => $validated['sales_invoice_status'],
+                'status'   => $validated['status'],
                 'updated_by'             => Auth::id(),
                 'updated_at'             => now(),
             ]);
