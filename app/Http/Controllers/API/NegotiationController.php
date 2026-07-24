@@ -199,6 +199,7 @@ class NegotiationController extends Controller
                             'item_name'     => optional($row->item)->name,
                             'description'   => optional($row->item)->description,
                             'part_model_no' => optional($row->item)->part_model_no,
+                            'customer_qty_order' => $row->customer_qty_order,  
                             'quantity'      => $row->quantity,
                             'price'         => $row->price,
                             'status'        => $row->status,

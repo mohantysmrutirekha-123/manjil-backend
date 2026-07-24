@@ -148,6 +148,7 @@ $enquiries = Inquiry::with([
                     'description'   => optional($row->item)->description,
                     'part_model_no' => optional($row->item)->part_model_no,
                     'quantity'      => $row->quantity,
+                     'customer_qty_order' => $row->customer_qty_order,  
                     'price'         => $row->price,
                     'status'        => $row->status,
                     'date'          => optional($row->created_at)->format('Y-m-d'),

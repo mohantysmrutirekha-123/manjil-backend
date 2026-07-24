@@ -67,6 +67,16 @@ class PoToPrincipalController extends Controller
             // send item_ids, instead of touching every row that happens to
             // share this enquiry's inquiry_code.
             $itemIds = !empty($validated['item_ids']) ? $validated['item_ids'] : [$id];
+            // ADD THIS BLOCK
+$availableQty = (float) Inquiry::whereIn('id', $itemIds)->sum('customer_qty_order');
+
+if ($totalQtyOrdered > $availableQty) {
+    DB::rollBack();
+    return response()->json([
+        'status'  => false,
+        'message' => "Ordered qty ({$totalQtyOrdered}) exceeds the qty available to convert ({$availableQty}) for the selected items.",
+    ], 422);
+}
 
             Inquiry::whereIn('id', $itemIds)
                 ->update([
@@ -217,6 +227,7 @@ $enquiries = Inquiry::with([
                     'item_name'     => optional($row->item)->name,
                     'description'   => optional($row->item)->description,
                     'part_model_no' => optional($row->item)->part_model_no,
+                    'customer_qty_order' => $row->customer_qty_order, 
                     'quantity'      => $row->quantity,
                     'price'         => $row->price,
                     'status'        => $row->status,
@@ -329,11 +340,11 @@ $enquiries = Inquiry::with([
 
             $validated = $request->validate([
                 'po_principal_no'              => 'required|string|max:255',
-                'promise_date'                 => 'required|date',
+                'promise_date'                 => 'nullable|date',
                 'total_qty_ordered_principal'  => 'required|numeric|min:1',
                 'qty_received_principal'       => 'nullable|numeric|min:0',
                 'released_date'                => 'nullable|date',
-                'po_principal_status'          => 'required|in:PENDING,DISPATCH PARTIAL,DISPATCH FULL',
+                'status'                       => 'required|in:PENDING,DISPATCH PARTIAL,DISPATCH FULL',
                 'principal_po_document'        => 'nullable|file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120',
                 'item_ids'                     => 'nullable|array',
                 'item_ids.*'                   => 'integer|exists:inquiries,id',
@@ -360,16 +371,26 @@ $enquiries = Inquiry::with([
             // actually belong to this PO-to-Principal batch, not every row
             // under the enquiry's parent_id.
             $itemIds = !empty($validated['item_ids']) ? $validated['item_ids'] : [$id];
+            // ADD THIS BLOCK
+$availableQty = (float) Inquiry::whereIn('id', $itemIds)->sum('customer_qty_order');
+
+if ($totalQtyOrdered > $availableQty) {
+    DB::rollBack();
+    return response()->json([
+        'success' => false,
+        'message' => "Ordered qty ({$totalQtyOrdered}) exceeds the qty available to convert ({$availableQty}) for the selected items.",
+    ], 422);
+}
 
             Inquiry::whereIn('id', $itemIds)->update([
                 'po_principal_no'              => $validated['po_principal_no'],
-                'promise_date'                 => $validated['promise_date'],
+                // 'promise_date'                 => $validated['promise_date'],
                 'total_qty_ordered_principal'  => $totalQtyOrdered,
-                'qty_received_principal'       => $qtyReceived,
-                'pending_qty_principal'        => $pendingQty,
+                'qty_received_principal'       => $qtyReceived ?? null,
+                'pending_qty_principal'        => $pendingQty ?? null,
                 'released_date'                => $validated['released_date'] ?? null,
-                'principal_po_document'        => $document,
-                'po_principal_status'          => $validated['po_principal_status'],
+                'principal_po_document'        => $document ?? null,
+                'status'                       => $validated['status'],
                 'updated_by'                   => Auth::id(),
                 'updated_at'                   => now(),
             ]);

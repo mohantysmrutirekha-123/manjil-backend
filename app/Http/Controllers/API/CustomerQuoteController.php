@@ -183,9 +183,35 @@ class CustomerQuoteController extends Controller
             ->whereIn('enquiry_type', $stages)
             ->get();
 
+            // $batches = $items->groupBy(function ($row) {
+            //     return $row->quotation_no . '|' . $row->budgetary_no . '|' . $row->customer_quote_date;
+            // });
+
+            // foreach ($batches as $batchItems) {
+
             $batches = $items->groupBy(function ($row) {
                 return $row->quotation_no . '|' . $row->budgetary_no . '|' . $row->customer_quote_date;
             });
+
+            // Stages that mean a batch has actually moved forward from a
+            // plain, unconverted "customer_quotation" placeholder.
+            $advancedStages = ['Customer_PO', 'Negotiation', 'PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'];
+
+            $hasAdvancedBatch = $batches->contains(function ($batchItems) use ($advancedStages) {
+                return in_array($batchItems->first()->enquiry_type, $advancedStages);
+            });
+
+            if ($hasAdvancedBatch) {
+                // Drop sibling batches still stuck at "customer_quotation"
+                // with no quotation/budgetary number — these are stale
+                // placeholders left behind once another batch converted.
+                $batches = $batches->reject(function ($batchItems) use ($advancedStages) {
+                    $first = $batchItems->first();
+                    $isUnconverted = !in_array($first->enquiry_type, $advancedStages);
+                    $isBlank = empty($first->quotation_no) && empty($first->budgetary_no);
+                    return $isUnconverted && $isBlank;
+                });
+            }
 
             foreach ($batches as $batchItems) {
 
@@ -230,6 +256,28 @@ class CustomerQuoteController extends Controller
                 ];
             }
         }
+
+        // return response()->json([
+        //     'status'  => true,
+        //     'message' => 'Customer Quotation List',
+        //     'data'    => $data
+        // ], 200);
+
+                // Display-only dedupe: this page should show ONE row per Enquiry ID.
+        // If the same inquiry_code produced multiple rows (e.g. a BO's
+        // "Convert to Enquiry" spun off a second parent chain), keep the
+        // row that actually has a Quotation/Budgetary number and drop the
+        // blank placeholder(s). No data is changed — only what's rendered
+        // on this list.
+        $data = collect($data)
+            ->groupBy('inquiry_code')
+            ->map(function ($rows) {
+                return $rows->sortByDesc(function ($row) {
+                    return (!empty($row['quotation_no']) || !empty($row['budgetary_no'])) ? 1 : 0;
+                })->first();
+            })
+            ->values()
+            ->all();
 
         return response()->json([
             'status'  => true,

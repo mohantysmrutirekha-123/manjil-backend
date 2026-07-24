@@ -116,6 +116,8 @@ class Inquiry extends Model
         'converted_customer_inquiry_id',
         'source_principal_item_id',
         'url',
+        'source_bo_id',
+        'linked_customer_quote_id',
     ];
 
     //  User relation

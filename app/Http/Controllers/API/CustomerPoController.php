@@ -9,112 +9,195 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Carbon;
+use Illuminate\Validation\ValidationException; 
 
 class CustomerPoController extends Controller
 {
 
-    public function convertTocustomerpo(Request $request, $id)
+ public function convertTocustomerpo(Request $request, $id)
     {
         DB::beginTransaction();
-
+ 
         try {
-
+ 
             $firstInquiry = Inquiry::find($id);
-
+ 
             if (!$firstInquiry) {
                 return response()->json([
                     'status' => false,
                     'message' => 'Inquiry not found.'
                 ], 404);
             }
-
+ 
             if ($firstInquiry->user_id != Auth::id() && Auth::user()->role != 'admin') {
                 return response()->json([
                     'status' => false,
                     'message' => 'Unauthorized.'
                 ], 403);
             }
-
+ 
             $validated = $request->validate([
-                'customer_po_no'        => 'nullable|string|max:255',
-                'customer_due_date'     => 'nullable|date',
-                'customer_qty_order'    => 'nullable|numeric|min:1',
-                'me_ref'                => 'nullable|string|max:255',
-                'pending_qty'           => 'nullable|numeric|min:0',
-                'status'                => 'nullable|in:Checked,Not Checked',
-                'customer_pdo_document' => 'nullable|file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120',
-                'item_ids'               => 'required|array|min:1',
-                'item_ids.*'             => 'required|exists:inquiries,id',
-            ]);
-
+    'customer_po_no'        => 'nullable|string|max:255',
+    'customer_due_date'     => 'nullable|date',
+    'customer_qty_order'    => 'nullable|numeric',
+    'me_ref'                => 'nullable|string|max:255',
+    'pending_qty'           => 'nullable|numeric|min:0',
+    'status'                => 'nullable|in:Checked,Not Checked',
+    'customer_pdo_document' => 'nullable|file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120',
+    'item_ids'               => 'required|array|min:1',
+    'item_ids.*'             => 'required|exists:inquiries,id',
+    'item_quantities'                => 'nullable|array',
+    'item_quantities.*.id'           => 'required_with:item_quantities|exists:inquiries,id',
+    'item_quantities.*.ordered_qty'  => 'required_with:item_quantities|numeric|min:0',
+]);
+ 
+            /*
+            |--------------------------------------------------------------------------
+            | Cap ordered qty at each item's remaining (unconverted) qty
+            |--------------------------------------------------------------------------
+            | 'quantity' is the original line qty from the enquiry. Anything
+            | already sitting in customer_qty_order for that row was already
+            | converted in a previous batch, so the ceiling for THIS batch is
+            | (quantity - customer_qty_order already converted elsewhere) —
+            | never the full original quantity again.
+            */
+ 
+            $selectedItems = Inquiry::whereIn('id', $validated['item_ids'])
+                ->where('inquiry_code', $firstInquiry->inquiry_code)
+                ->get(['id', 'quantity', 'customer_qty_order']);
+ 
+            $overLimit = [];
+ 
+            $orderedQtyById = [];
+ 
+            if (!empty($validated['item_quantities'])) {
+                foreach ($validated['item_quantities'] as $row) {
+                    $orderedQtyById[$row['id']] = (float) $row['ordered_qty'];
+                }
+            }
+ 
+            foreach ($selectedItems as $item) {
+ 
+                $alreadyConverted = (float) ($item->customer_qty_order ?? 0);
+                $remaining        = max(0, (float) $item->quantity - $alreadyConverted);
+ 
+                $requestedQty = array_key_exists($item->id, $orderedQtyById)
+                    ? $orderedQtyById[$item->id]
+                    : (float) ($validated['customer_qty_order'] ?? 0);
+ 
+                if ($requestedQty > $remaining) {
+                    $overLimit[] = [
+                        'id'        => $item->id,
+                        'requested' => $requestedQty,
+                        'remaining' => $remaining,
+                    ];
+                }
+            }
+ 
+            if (!empty($overLimit)) {
+                DB::rollBack();
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'Ordered qty exceeds the remaining unconverted qty for one or more items.',
+                    'errors'  => $overLimit,
+                ], 422);
+            }
+ 
             /*
             |--------------------------------------------------------------------------
             | Upload Customer PO Document
             |--------------------------------------------------------------------------
             */
-
+ 
             $document = null;
-
+ 
             if ($request->hasFile('customer_pdo_document')) {
-
+ 
                 $file = $request->file('customer_pdo_document');
-
+ 
                 $document = time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
-
+ 
                 $file->move(public_path('uploads/customer_po_documents'), $document);
             }
-
+ 
             /*
             |--------------------------------------------------------------------------
             | Update Inquiry Items
             |--------------------------------------------------------------------------
             */
-
+ 
             Inquiry::whereIn('id', $validated['item_ids'])
             ->where('inquiry_code', $firstInquiry->inquiry_code)
             ->update([
                 'enquiry_type'          => 'Customer_PO',
                 'customer_po_no'        => $validated['customer_po_no'],
                 'customer_due_date'     => $validated['customer_due_date'],
-                'customer_qty_order'    => $validated['customer_qty_order'],
                 'me_ref'                => $validated['me_ref'],
-                'pending_qty'           => $validated['pending_qty'] ?? null,
                 'customer_pdo_document' => $document,
                 'status'                => $validated['status'],
                 'updated_by'            => Auth::id(),
                 'updated_at'            => now(),
             ]);
-
+ 
+ 
+            if (!empty($validated['item_quantities'])) {
+    foreach ($validated['item_quantities'] as $row) {
+        $item = $selectedItems->firstWhere('id', $row['id']);
+        $newConverted = (float) ($item->customer_qty_order ?? 0) + (float) $row['ordered_qty'];
+        $itemRemaining = max(0, (float) $item->quantity - $newConverted);
+ 
+        Inquiry::where('id', $row['id'])
+            ->where('inquiry_code', $firstInquiry->inquiry_code)
+            ->update([
+                'customer_qty_order' => $newConverted,
+                'pending_qty'        => $itemRemaining,
+            ]);
+    }
+} else {
+    // fallback: old behavior if no per-item data sent — same item is
+    // credited with the single value across every selected row, added
+    // to whatever it already had converted.
+    foreach ($selectedItems as $item) {
+        $newConverted  = (float) ($item->customer_qty_order ?? 0) + (float) ($validated['customer_qty_order'] ?? 0);
+        $itemRemaining = max(0, (float) $item->quantity - $newConverted);
+ 
+        Inquiry::where('id', $item->id)
+            ->where('inquiry_code', $firstInquiry->inquiry_code)
+            ->update([
+                'customer_qty_order' => $newConverted,
+                'pending_qty'        => $itemRemaining,
+            ]);
+    }
+}
             DB::commit();
-
+ 
             return response()->json([
                 'status' => true,
                 'message' => 'Customer PO created successfully.',
                 'file' => $document
             ], 200);
-
+ 
         } catch (ValidationException $e) {
-
+ 
             DB::rollBack();
-
+ 
             return response()->json([
                 'status' => false,
                 'errors' => $e->errors()
             ], 422);
-
+ 
         } catch (\Exception $e) {
-
+ 
             DB::rollBack();
-
+ 
             Log::error('Customer PO Error: ' . $e->getMessage());
-
+ 
             return response()->json([
                 'status' => false,
                 'message' => $e->getMessage()
             ], 500);
         }
     }
-
    public function customerpoList()
 {
     try {
@@ -223,6 +306,7 @@ class CustomerPoController extends Controller
                             'item_name'     => optional($row->item)->name,
                             'description'   => optional($row->item)->description,
                             'part_model_no' => optional($row->item)->part_model_no,
+                            'customer_qty_order' => $row->customer_qty_order,  
                             'quantity'      => $row->quantity,
                             'price'         => $row->price,
                             'status'        => $row->status,
@@ -343,6 +427,7 @@ class CustomerPoController extends Controller
                 'pending_qty'           => 'nullable|numeric|min:0',
                 'status'                => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
                 'customer_pdo_document' => 'nullable|file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120',
+                'item_quantities.*.ordered_qty' => 'required_with:item_quantities|numeric|min:0',
             ]);
 
             $inquiry = Inquiry::findOrFail($id);
@@ -372,6 +457,18 @@ class CustomerPoController extends Controller
                 'updated_by'             => Auth::id(),
                 'updated_at'             => now(),
             ]);
+
+
+            if (!empty($validated['item_quantities'])) {
+    foreach ($validated['item_quantities'] as $row) {
+        Inquiry::where('id', $row['id'])
+            ->where('parent_id', $parentId)
+            ->update(['customer_qty_order' => $row['ordered_qty']]);
+    }
+} else {
+    Inquiry::where('parent_id', $parentId)
+        ->update(['customer_qty_order' => $validated['customer_qty_order']]);
+}
 
             DB::commit();
 

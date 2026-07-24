@@ -96,6 +96,8 @@ Route::middleware('auth:sanctum')->group(function () {
     // ── Opportunity → Enquiry conversion ────────────────────────────────
     Route::post('/opportunity/convert-to-enquiry', [OpportunityController::class, 'convertToEnquiry']);
 
+    Route::put('/convert-bo-to-enquiry/{boId}', [InquiryController::class, 'convertBoToEnquiry']);
+
 
     Route::put('/convertToprincipalqutation/{id}', [InquiryController::class, 'convertToprincipalqutation']);
 

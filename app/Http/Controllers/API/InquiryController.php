@@ -426,30 +426,41 @@ public function inquiryDetails($parentId)
             // Update / add / remove item lines if provided
             if ($req->has('items') && is_array($req->items) && count($req->items) > 0) {
                 $existingRows = Inquiry::where('parent_id', $parentId)->get();
+                $existingRowsById = $existingRows->keyBy('id');
+                $keptIds = [];
 
-                foreach ($req->items as $index => $item) {
-                    if (isset($existingRows[$index])) {
-                        $existingRows[$index]->update([
-                            'item_id'  => $item['item_id'],
-                            'quantity' => $item['quantity'],
-                            'inquiry_date' => $item['date'] ?? $existingRows[$index]->inquiry_date,
+                foreach ($req->items as $item) {
+
+                    $existingRow = !empty($item['id'])
+                        ? $existingRowsById->get($item['id'])
+                        : null;
+
+                    if ($existingRow) {
+                        $existingRow->update([
+                            'item_id'      => $item['item_id'],
+                            'quantity'     => $item['quantity'],
+                            'inquiry_date' => $item['date'] ?? $existingRow->inquiry_date,
                         ]);
+
+                        $keptIds[] = $existingRow->id;
+
                     } else {
-                        Inquiry::create(array_merge($sharedFields, [
-                            'parent_id'  => $parentId,
-                            'item_id'    => $item['item_id'],
-                            'quantity'   => $item['quantity'],
+                        $newRow = Inquiry::create(array_merge($sharedFields, [
+                            'parent_id'    => $parentId,
+                            'item_id'      => $item['item_id'],
+                            'quantity'     => $item['quantity'],
                             'inquiry_date' => $item['date'] ?? $sharedFields['inquiry_date'],
-                            'user_id'    => $inquiry->user_id,
-                            'created_by' => Auth::id(),
+                            'user_id'      => $inquiry->user_id,
+                            'created_by'   => Auth::id(),
                         ]));
+
+                        $keptIds[] = $newRow->id;
                     }
                 }
 
-                if ($existingRows->count() > count($req->items)) {
-                    $existingRows->slice(count($req->items))
-                        ->each(fn ($row) => $row->delete());
-                }
+                $existingRows
+                    ->reject(fn ($row) => in_array($row->id, $keptIds))
+                    ->each(fn ($row) => $row->delete());
             }
 
             $inquiry->refresh();
@@ -601,18 +612,34 @@ public function convertToprincipalqutation(Request $request, $parentId)
             }
 
             if (empty($catalogItem)) {
-                $catalogItem = Item::firstOrCreate(
-                    ['mat_code' => $item['mat_code']],
-                    [
-                        'name'          => $item['item_name'] ?: $item['mat_code'],
+
+                if (!empty($item['mat_code'])) {
+                    // Real mat_code given — safe to look up/reuse a
+                    // matching catalog item.
+                    $catalogItem = Item::firstOrCreate(
+                        ['mat_code' => $item['mat_code']],
+                        [
+                            'name'          => $item['item_name'] ?: $item['mat_code'],
+                            'part_model_no' => $item['part_model_no'] ?? '',
+                            'description'   => $item['description'] ?? '',
+                        ]
+                    );
+                } else {
+                    // No mat_code given — create a fresh catalog item with
+                    // mat_code left blank ('' — not null, so the NOT NULL
+                    // column is satisfied) instead of matching/colliding
+                    // with other blank-mat_code items.
+                    $catalogItem = Item::create([
+                        'mat_code'      => '',
+                        'name'          => $item['item_name'] ?: '',
                         'part_model_no' => $item['part_model_no'] ?? '',
                         'description'   => $item['description'] ?? '',
-                    ]
-                );
+                    ]);
+                }
             }
 
             $catalogItem->fill([
-                'mat_code'      => $item['mat_code'],
+                'mat_code'      => $item['mat_code'] ?: $catalogItem->mat_code,
                 'name'          => !empty($item['item_name']) ? $item['item_name'] : $catalogItem->name,
                 'description'   => $item['description'] ?? $catalogItem->description,
                 'part_model_no' => $item['part_model_no'] ?? $catalogItem->part_model_no,
@@ -645,6 +672,7 @@ public function convertToprincipalqutation(Request $request, $parentId)
                 'principal_quote_no'   => $validated['principal_quote_no'] ?? null,
                 'principal_quote_date' => $validated['principal_quote_date'],
                 'status'               => $validated['status'],
+                'linked_customer_quote_id' => $firstInquiry->source_bo_id, 
                 'updated_by'           => Auth::id(),
                 'updated_at'           => now(),
             ];
@@ -701,6 +729,135 @@ public function convertToprincipalqutation(Request $request, $parentId)
         return response()->json([
             'status' => 500,
             'message' => $e->getMessage()
+        ], 500);
+    }
+}
+
+public function convertBoToEnquiry(Request $req, $boId)
+{
+    $bo = Inquiry::find($boId);
+    if (!$bo || !$bo->budgetary_no) {
+        return response()->json([
+            'status' => 404,
+            'message' => 'Not a Budgetary Offer.',
+        ], 404);
+    }
+
+    $validated = $req->validate([
+        'inquiry_id' => 'required|string|max:100', // RFQ No.
+    ]);
+
+    DB::beginTransaction();
+
+    try {
+        $newEnquiry = Inquiry::create([
+            'parent_id'        => null,
+            'inquiry_id'       => $validated['inquiry_id'],
+            'inquiry_code'     => $bo->inquiry_code,   // same Enquiry ID as the BO
+            'inquiry_date'     => now(),
+
+            'enquiry_type'     => 'General',
+            'customer_id'      => $bo->customer_id,
+
+            'concerned_person' => $bo->concerned_person ?? 'N/A',
+            'concerned_area'   => $bo->concerned_area,
+
+            'principal_id'     => $bo->principal_id,
+            'status'           => 'Pending',
+            'url'              => $bo->url,
+
+            'user_id'          => Auth::id(),
+            'created_by'       => Auth::id(),
+            'updated_by'       => Auth::id(),
+
+            'source_bo_id'     => $bo->id,
+        ]);
+
+        // Self-parent, same as store() — makes it a standalone row that
+        // shows up correctly in the Enquiry list.
+        $newEnquiry->update(['parent_id' => $newEnquiry->id]);
+
+        //add------------
+
+        $boItems = Inquiry::where('parent_id', $bo->parent_id)
+            ->whereNotNull('item_id')
+            ->get();
+
+        foreach ($boItems as $boItem) {
+            Inquiry::create([
+                'parent_id'        => $newEnquiry->id,
+                'inquiry_id'       => $validated['inquiry_id'],
+                'inquiry_code'     => $newEnquiry->inquiry_code,
+                'inquiry_date'     => now(),
+
+                'enquiry_type'     => 'General',
+                'customer_id'      => $bo->customer_id,
+
+                'concerned_person' => $bo->concerned_person ?? 'N/A',
+                'concerned_area'   => $bo->concerned_area,
+
+                'principal_id'     => $bo->principal_id,
+                'status'           => 'Pending',
+                'url'              => $bo->url,
+
+                'item_id'          => $boItem->item_id,
+                'quantity'         => $boItem->quantity,
+                'price'            => $boItem->price,
+
+                'user_id'          => Auth::id(),
+                'created_by'       => Auth::id(),
+                'updated_by'       => Auth::id(),
+
+                'source_bo_id'     => $bo->id,
+            ]);
+        }
+
+        //---------------------
+
+        // DB::commit();
+
+        // return response()->json([
+        //     'status'       => 200,
+        //     'message'      => 'Converted to Enquiry successfully.',
+        //     'inquiry_code' => $bo->inquiry_code,
+        //     'parent_id'    => $newEnquiry->id,
+        //     'data'         => $newEnquiry,
+        // ]);
+
+        // add --------------
+
+        //---------------------
+
+        // Attach the freshly-copied item rows onto the returned Enquiry
+        // (same shape allInquiry() uses for its 'items' attribute) so the
+        // frontend's mapEnquiry() sees them right away, instead of the
+        // reducer defaulting record.items to [] and the Add Principal
+        // Quotation popup opening with "No items selected yet".
+        $newEnquiry->setAttribute(
+            'items',
+            Inquiry::with('item:id,name,mat_code,part_model_no,description')
+                ->where('parent_id', $newEnquiry->id)
+                ->get()
+        );
+
+        DB::commit();
+
+        return response()->json([
+            'status'       => 200,
+            'message'      => 'Converted to Enquiry successfully.',
+            'inquiry_code' => $bo->inquiry_code,
+            'parent_id'    => $newEnquiry->id,
+            'data'         => $newEnquiry,
+        ]);
+
+    //-----------------------------
+
+    } catch (\Throwable $e) {
+        DB::rollBack();
+        Log::error('convertBoToEnquiry error: ' . $e->getMessage());
+        return response()->json([
+            'status' => 500,
+            'message' => $e->getMessage(),
         ], 500);
     }
 }
