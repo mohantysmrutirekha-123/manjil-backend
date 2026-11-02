@@ -142,7 +142,7 @@ class MaterialTrackingController extends Controller
 
             $validated = $request->validate([
                 'qty' => 'nullable|numeric',
-                'packages_count' => 'nullable|string|max:100',
+                'packages_count' => 'nullable|max:100',
                 'status' => 'nullable|in:Pending,Dispatched,In Transit,Delivered',
                 'condition' => 'nullable|in:Accepted,Damaged,Short,Mismatch',
                 'dispatch_date' => 'nullable|date',
@@ -212,7 +212,7 @@ class MaterialTrackingController extends Controller
 
             $validated = $request->validate([
                 'qty' => 'sometimes|numeric|min:0.01',
-                'packages_count' => 'nullable|string|max:100',
+                'packages_count' => 'nullable|max:100',
                 'status' => 'sometimes|in:Pending,Dispatched,In Transit,Delivered',
                 'condition' => 'nullable|in:Accepted,Damaged,Short,Mismatch',
                 'dispatch_date' => 'nullable|date',

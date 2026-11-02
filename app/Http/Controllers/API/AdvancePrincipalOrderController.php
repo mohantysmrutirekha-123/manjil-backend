@@ -209,7 +209,8 @@ class AdvancePrincipalOrderController extends Controller
             $totalBasic = 0;
             $combinedSourceIds = [];
 
-            foreach ($validated['items'] as $it) {
+            $items = $validated['items'] ?? [];
+            foreach ($items as $it) {
                 $cInq = Inquiry::find($it['customer_inquiry_id']);
                 if ($cInq) {
                     $combinedSourceIds[] = [
@@ -237,7 +238,7 @@ class AdvancePrincipalOrderController extends Controller
                 'po_principal_no'             => $poPrincipalNo,
                 'po_date'                     => $poDate,
                 'principal_id'                => $validated['principal_id'] ?? null,
-                'principal_name'              => $validated['principal_name'],
+                'principal_name'              => $validated['principal_name'] ?? null,
                 'total_qty_ordered_principal' => $totalQty,
                 'quantity'                    => $totalQty,
                 'basic_amount'                => $totalBasic,
