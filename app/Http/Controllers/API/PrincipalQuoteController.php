@@ -1,6 +1,5 @@
 <?php
 
-
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
@@ -10,44 +9,42 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class PrincipalQuoteController extends Controller
 {
     public function principalquotationList(Request $req)
-    {
-        try {
+{
+    try {
 
-            $stages = ['principal_quotation', 'customer_quotation', 'Customer_PO', 'Negotiation', 'PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'];
+        $stages = ['principal_quotation', 'customer_quotation', 'Customer_PO', 'Negotiation', 'PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'];
 
-            $query = Inquiry::with([
-                'customer:id,name',
-                'item:id,name,mat_code,part_model_no,description'
-            ])
-            ->whereColumn('id', 'parent_id')
-            ->where(function ($q) use ($stages) {
-                $q->whereIn('enquiry_type', $stages)
-                ->orWhereHas('children', function ($cq) use ($stages) {
-                    $cq->whereIn('enquiry_type', $stages);
-                });
+        $query = Inquiry::with([
+            'customer:id,name',
+            'item:id,name,mat_code,part_model_no,description'
+        ])
+        ->whereColumn('id', 'parent_id')
+        ->where(function ($q) use ($stages) {
+            $q->whereIn('enquiry_type', $stages)
+            ->orWhereHas('children', function ($cq) use ($stages) {
+                $cq->whereIn('enquiry_type', $stages);
             });
+        });
 
-            $query = $this->applyFilters($query, $req);
+        $query = $this->applyFilters($query, $req);
 
-            $enquiries = $query->get();
+        $enquiries = $query->get();
 
-            $data = [];
+        $data = [];
 
-            foreach ($enquiries as $enquiry) {
+        foreach ($enquiries as $enquiry) {
 
             // Get all child items for this enquiry
             $items = Inquiry::with([
                 'item:id,name,mat_code,part_model_no,description'
             ])
             ->where('parent_id', $enquiry->id)
-            //->where('id', '!=', $enquiry->id)
-               // NEW LINE — excludes the head row from its own items list
-            //  ->where('enquiry_type', 'principal_quotation')
-            ->whereIn('enquiry_type', ['principal_quotation', 'customer_quotation', 'Customer_PO', 'Negotiation','Customer_PO', 'PO_Principal','Sales_Invoice', 'Purchase_Invoice'])
+            ->whereIn('enquiry_type', ['principal_quotation', 'customer_quotation', 'Customer_PO', 'Negotiation', 'PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'])
             ->get();
 
             // The head/parent row's own principal_quote_no can be empty even
@@ -58,55 +55,62 @@ class PrincipalQuoteController extends Controller
             // item rows on the frontend.
             $quotedItem = $items->first(fn ($row) => !empty($row->principal_quote_no));
             $quotedDateItem = $items->first(fn ($row) => !empty($row->principal_quote_date));
+            $linkedItem = $items->first(fn ($row) => !empty($row->linked_customer_quote_id));
+            // received_via has the same head-vs-child issue as principal_quote_no
+            // above — the head row is often null while a child item under it
+            // (created on conversion) actually carries the value.
+            $viaItem = $items->first(fn ($row) => !empty($row->received_via));
 
             $data[] = [
-                'id'                   => $enquiry->id,
-                'parent_id'            => $enquiry->parent_id,
-                'inquiry_id'           => $enquiry->inquiry_id,
-                'inquiry_code'         => $enquiry->inquiry_code,
-                'enquiry_type'         => $enquiry->enquiry_type,
-                'customer_id'          => $enquiry->customer_id,
-                'customer_name'        => optional($enquiry->customer)->name,
-                'principal_id'         => $enquiry->principal_id,
-                'principal_quote_no'   => $enquiry->principal_quote_no ?? optional($quotedItem)->principal_quote_no,
-                'principal_quote_date' => $enquiry->principal_quote_date ?? optional($quotedDateItem)->principal_quote_date,
-                'price'                => $enquiry->price,
-                'status'               => $enquiry->status,
+                'id'                       => $enquiry->id,
+                'parent_id'                => $enquiry->parent_id,
+                'inquiry_id'               => $enquiry->inquiry_id,
+                'inquiry_code'             => $enquiry->inquiry_code,
+                'enquiry_type'             => $enquiry->enquiry_type,
+                'customer_id'              => $enquiry->customer_id,
+                'customer_name'            => optional($enquiry->customer)->name,
+                'principal_id'             => $enquiry->principal_id,
+                'received_via'             => $enquiry->received_via ?? optional($viaItem)->received_via,
+                'principal_quote_no'       => $enquiry->principal_quote_no ?? optional($quotedItem)->principal_quote_no,
+                'principal_quote_date'     => $enquiry->principal_quote_date ?? optional($quotedDateItem)->principal_quote_date,
+                'price'                    => $enquiry->price,
+                'status'                   => $enquiry->status,
+                'linked_customer_quote_id' => $enquiry->linked_customer_quote_id ?? optional($linkedItem)->linked_customer_quote_id,
 
-                    'items' => $items->map(function ($row) {
-
-                        return [
-                            'id'            => $row->id,
-                            'item_id'       => $row->item_id,
-                            'material_code' => optional($row->item)->mat_code,
-                            'item_name'     => optional($row->item)->name,
-                            'description'   => optional($row->item)->description,
-                            'part_model_no' => optional($row->item)->part_model_no,
-                            'quantity'      => $row->quantity,
-                            'price'         => $row->price,
-                            'status'        => $row->status,
-                            'date'          => optional($row->created_at)->format('Y-m-d'),
-                               'is_converted'  => $row->enquiry_type !== 'principal_quotation',
-                        ];
-
-                    })->values()
-                ];
-            }
-
-            return response()->json([
-                'status'  => true,
-                'message' => 'Principal Quotation List',
-                'data'    => $data
-            ], 200);
-
-        } catch (\Exception $e) {
-
-            return response()->json([
-                'status'  => false,
-                'message' => $e->getMessage()
-            ], 500);
+                'items' => $items->groupBy('item_id')->map(function ($group) {
+                    $row = $group->sortBy('id')->first();
+                    return [
+                        'id'            => $row->id,
+                        'item_id'       => $row->item_id,
+                        'material_code' => optional($row->item)->mat_code,
+                        'item_name'     => optional($row->item)->name,
+                        'description'   => optional($row->item)->description,
+                        'part_model_no' => optional($row->item)->part_model_no,
+                        'quantity'      => $row->quantity,
+                        'price'         => $row->price,
+                        'status'        => $row->status,
+                        'date'          => optional($row->created_at)->format('Y-m-d'),
+                        'is_converted'  => $row->enquiry_type !== 'principal_quotation',
+                        'received_via'  => $row->received_via,
+                    ];
+                })->values()
+            ];
         }
+
+        return response()->json([
+            'status'  => true,
+            'message' => 'Principal Quotation List',
+            'data'    => $data
+        ], 200);
+
+    } catch (\Exception $e) {
+
+        return response()->json([
+            'status'  => false,
+            'message' => $e->getMessage()
+        ], 500);
     }
+}
 
     /**
      * COMMON FILTER FUNCTION (REUSABLE)
@@ -186,7 +190,7 @@ class PrincipalQuoteController extends Controller
         ];
     }
 
-  public function update(Request $request, $id)
+   public function update(Request $request, $id)
 {
     DB::beginTransaction();
 
@@ -196,19 +200,80 @@ class PrincipalQuoteController extends Controller
 
         $parentId = $inquiry->parent_id;
 
-        // Update the shared/head-level fields across the whole group
+        // Update the shared/head-level fields across the whole group.
+        // NOTE: principal_quote_no and received_via fall back to the existing
+        // value when the request sends them empty, instead of blanking them
+        // out on every item in the group — the edit form can legitimately
+        // submit "" here if that field wasn't touched.
         Inquiry::where('parent_id', $parentId)->update([
-            'principal_quote_no'   => $request->principal_quote_no,
+            'principal_quote_no'   => $request->principal_quote_no !== ''
+                ? $request->principal_quote_no
+                : $inquiry->principal_quote_no,
             'principal_quote_date' => $request->principal_quote_date,
             'customer_id'          => $request->customer_id,
             'principal_id'         => $request->principal_id,
             'status'               => $request->status,
+            'received_via'         => $request->received_via !== ''
+                ? $request->received_via
+                : $inquiry->received_via,
             'updated_by'           => Auth::id(),
         ]);
 
         foreach ($request->items ?? [] as $item) {
 
             if (empty($item['id'])) {
+
+                // ── NEW ITEM: frontend sent no id, so there's nothing to
+                // find/update — insert a new Inquiry row for it instead of
+                // silently skipping it. Mirrors the row-creation logic in
+                // store(), but attaches to the existing parent group.
+                $newItem = Inquiry::create([
+                    'parent_id'             => $parentId,
+
+                    'inquiry_code'          => $inquiry->inquiry_code,
+                    'inquiry_id'            => $inquiry->inquiry_id,
+
+                    'enquiry_type'          => 'principal_quotation',
+
+                    'customer_id'           => $request->customer_id,
+                    'principal_id'          => $request->principal_id,
+
+                    'item_id'               => $item['item_id'] ?? null,
+                    'quantity'              => $item['qty'] ?? $item['quantity'] ?? 0,
+                    'price'                 => $item['price'] ?? 0,
+
+                    'principal_quote_no'    => $request->principal_quote_no !== ''
+                        ? $request->principal_quote_no
+                        : $inquiry->principal_quote_no,
+                    'principal_quote_date'  => $request->principal_quote_date,
+                    'received_via'          => $request->received_via !== ''
+                        ? $request->received_via
+                        : $inquiry->received_via,
+
+                    'status'                => $item['status'] ?? $request->status,
+
+                    'user_id'               => Auth::id(),
+                    'created_by'            => Auth::id(),
+                    'updated_by'            => Auth::id(),
+                ]);
+
+                // Same catalog sync as the update-path below, so a newly
+                // added item's mat_code/name/description/part_model_no
+                // (if the user typed them fresh) land on the Item record.
+                if ($newItem->item_id) {
+
+                    $catalogItem = Item::find($newItem->item_id);
+
+                    if ($catalogItem) {
+                        $catalogItem->update([
+                            'mat_code'      => $item['mat_code']      ?? $catalogItem->mat_code,
+                            'name'          => $item['item_name']     ?? $catalogItem->name,
+                            'description'   => $item['description']   ?? $catalogItem->description,
+                            'part_model_no' => $item['part_model_no'] ?? $catalogItem->part_model_no,
+                        ]);
+                    }
+                }
+
                 continue;
             }
 
@@ -269,18 +334,18 @@ class PrincipalQuoteController extends Controller
 
             $request->validate([
 
-                'inquiry_id'             => 'required|string|max:20',
-                'inquiry_code'           => 'required|string|max:20',
-                'principal_quote_no'     => 'required|integer',
-                'principal_quote_date'   => 'required|date',
-                'customer_id'            => 'required|exists:users,id',
-                'principal_id'           => 'required|exists:users,id',
-                'status'                 => 'required',
+                'inquiry_id'             => 'nullable|string|max:20',
+                'inquiry_code'           => 'nullable|string|max:20',
+                'principal_quote_no'     => 'nullable|integer',
+                'principal_quote_date'   => 'nullable|date',
+                'customer_id'            => 'nullable|exists:users,id',
+                'principal_id'           => 'nullable|exists:users,id',
+                'status'                 => 'nullable',
 
-                'items'                  => 'required|array|min:1',
-                'items.*.item_id'        => 'required|exists:items,id',
-                'items.*.quantity'       => 'required|integer|min:1',
-                'items.*.price'          => 'required|numeric|min:0',
+                'items'                  => 'nullable|array',
+                'items.*.item_id'        => 'nullable|exists:items,id',
+                'items.*.quantity'       => 'nullable|integer',
+                'items.*.price'          => 'nullable|numeric|min:0',
             ]);
 
             DB::beginTransaction();

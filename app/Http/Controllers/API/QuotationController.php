@@ -64,10 +64,10 @@ class QuotationController extends Controller
     {
         try {
             $req->validate([
-                'inquiry_code'   => 'required|exists:inquiries,inquiry_code',
-                'principal_price'=> 'required|numeric',
-                'margin'         => 'required|numeric',
-                'status'         => 'required|in:Generated,Sent to Customer,Negotiation'
+                'inquiry_code'   => 'nullable|exists:inquiries,inquiry_code',
+                'principal_price'=> 'nullable|numeric',
+                'margin'         => 'nullable|numeric',
+                'status'         => 'nullable|in:Generated,Sent to Customer,Negotiation'
             ]);
 
             // 🔍 Get Inquiry using code
@@ -190,9 +190,9 @@ class QuotationController extends Controller
     {
         try {
             $user = Auth::user();
-            if ($user->role !== 'admin') {
-                return response()->json(['message' => 'Unauthorized'], 403);
-            }
+            // if ($user->role !== 'admin') {
+            //     return response()->json(['message' => 'Unauthorized'], 403);
+            // }
 
             //$query = Quotation::with('inquiry:id,enquiry_type,concerned_person');
              $query = Quotation::with([
@@ -235,9 +235,9 @@ class QuotationController extends Controller
             }
 
             $req->validate([
-                'principal_price' => 'sometimes|required|numeric',
-                'margin'          => 'sometimes|required|numeric',
-                'status'          => 'sometimes|required|in:Generated,Sent to Customer,Negotiation'
+                'principal_price' => 'sometimes|nullable|numeric',
+                'margin'          => 'sometimes|nullable|numeric',
+                'status'          => 'sometimes|nullable|in:Generated,Sent to Customer,Negotiation'
             ]);
 
             $principal = $req->principal_price ?? $quotation->principal_price;

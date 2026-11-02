@@ -42,7 +42,7 @@ class OpportunityController extends Controller
 
         // Validation
         $req->validate([
-            'customer_id'      => 'required|exists:users,id',
+            'customer_id'      => 'nullable|exists:users,id',
             'principal_id'     => 'nullable|exists:users,id',
             'quotation_ref'    => 'nullable|string|max:255',
             'details'          => 'nullable|string',
@@ -264,9 +264,9 @@ class OpportunityController extends Controller
     {
         $user = Auth::user();
 
-        if ($user->role !== 'admin') {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
+        // if ($user->role !== 'admin') {
+        //     return response()->json(['message' => 'Unauthorized'], 403);
+        // }
 
         $query = Opportunity::with([
             'customer:id,name,email',
@@ -363,12 +363,12 @@ class OpportunityController extends Controller
             }
 
             $req->validate([
-                'customer_id'      => 'sometimes|required|exists:users,id',
+                'customer_id'      => 'sometimes|nullable|exists:users,id',
                 'principal_id'     => 'nullable|exists:users,id',
                 'quotation_ref'    => 'nullable|string|max:255',
                 'details'          => 'nullable|string',
                 'attachment'       => 'nullable|string|max:255',
-                'status'           => 'sometimes|required|in:Open,In Progress,Converted,Lost',
+                'status'           => 'sometimes|nullable|in:Open,In Progress,Converted,Lost',
                 'opportunity_date' => 'nullable|date',
 
                 'items'                  => 'sometimes|array',
@@ -650,12 +650,12 @@ class OpportunityController extends Controller
             $req->validate([
                 'opportunity_item_ids'   => 'nullable|array',
                 'opportunity_item_ids.*' => 'distinct|exists:opportunities,id',
-                'opportunity_id'         => 'required|exists:opportunities,id',
+                'opportunity_id'         => 'nullable|exists:opportunities,id',
 
-                'enquiry_type'     => 'required|string|max:100',
-                'concerned_person' => 'required|string|max:255',
+                'enquiry_type'     => 'nullable|string|max:100',
+                'concerned_person' => 'nullable|string|max:255',
                 'concerned_area'   => 'nullable|string|max:255',
-                'status'           => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
+                'status'           => 'nullable|in:Price Requested,Pending,Closed,Completed,Regret',
                 'date'             => 'nullable|date',
                 'url'              => 'nullable|url|max:255',
 
@@ -947,22 +947,22 @@ public function convertOpportunityToPrincipalQuotation(Request $request)
     try {
 
         $validated = $request->validate([
-            'opportunity_id'               => 'required|exists:opportunities,id',
-            'principal_quote_no'           => 'required|string|max:255',
-            'principal_quote_date'         => 'required|date',
-            'customer_id'                  => 'required|exists:users,id',
+            'opportunity_id'               => 'nullable|exists:opportunities,id',
+            'principal_quote_no'           => 'nullable|string|max:255',
+            'principal_quote_date'         => 'nullable|date',
+            'customer_id'                  => 'nullable|exists:users,id',
             'principal_id'                 => 'nullable|exists:users,id',
-            'status'                       => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
-            'items'                        => 'required|array|min:1',
+            'status'                       => 'nullable|in:Price Requested,Pending,Closed,Completed,Regret',
+            'items'                        => 'nullable|array',
             // 'items.*.opportunity_item_id'  => 'required|exists:opportunities,id',
             'items.*.opportunity_item_id'  => 'nullable|integer|exists:opportunities,id',
-            'items.*.mat_code'             => 'required_without:items.*.opportunity_item_id|nullable|string|max:30',
+            'items.*.mat_code'             => 'nullable|string|max:30',
             'items.*.item_name'            => 'nullable|string|max:255',
             'items.*.description'          => 'nullable|string',
             'items.*.part_model_no'        => 'nullable|string|max:30',
-            'items.*.qty'                  => 'nullable|integer|min:1',
+            'items.*.qty'                  => 'nullable|integer',
             'items.*.date'                 => 'nullable|date',
-            'items.*.price'                => 'required|numeric|min:0',
+            'items.*.price'                => 'nullable|numeric|min:0',
         ]);
 
         $opportunity = Opportunity::findOrFail($validated['opportunity_id']);

@@ -163,4 +163,56 @@ class AuditLogController extends Controller
         }
     }
 
+
+
+
+
+
+
+
+
+    public function enquiryLogs(Request $request, $code)
+{
+    try {
+        $query = DB::table('audit_logs')->orderBy('id', 'desc');
+
+        if (auth()->user()->role != 'admin') {
+            $query->where('user_id', auth()->id());
+        }
+
+        $exactNeedle = json_encode((string) $code);
+        $looseNeedle = (string) $code;
+
+        $query->where(function ($q) use ($exactNeedle, $looseNeedle) {
+            $keys = [
+                'inquiry_code', 'enquiry_code', 'inquiryCode', 'enquiryCode',
+                'enquiry_ref', 'enquiryRef', 'reference', 'code',
+            ];
+            foreach ($keys as $key) {
+                $q->orWhere('data', 'like', '%"' . $key . '":' . $exactNeedle . '%');
+            }
+            $q->orWhere('data', 'like', '%' . $looseNeedle . '%');
+        });
+
+        $logs = $query->limit(200)->get();
+
+        $logs = $logs->map(function ($log) {
+            $log->data = json_decode($log->data, true);
+            return $log;
+        });
+
+        return response()->json([
+            'status'  => 200,
+            'message' => 'Enquiry audit logs fetched successfully',
+            'data'    => $logs,
+        ]);
+
+    } catch (\Exception $e) {
+        return response()->json([
+            'status'  => false,
+            'message' => 'Failed to fetch enquiry audit logs',
+            'error'   => $e->getMessage(),
+        ], 500);
+    }
+}
 }

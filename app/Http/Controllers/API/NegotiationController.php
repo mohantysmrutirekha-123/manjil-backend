@@ -36,18 +36,18 @@ class NegotiationController extends Controller
             }
 
             $validated = $request->validate([
-                'negotiation_details' => 'required|string|max:255',
-                'follow_notes'        => 'required|string|max:255',
-                'discussion_dates'    => 'required|date',
-                'status'              => 'required|in:Price Requested,Pending,Closed,Completed,Regret',
+                'negotiation_details' => 'nullable|string|max:255',
+                'follow_notes'        => 'nullable|string|max:255',
+                'discussion_dates'    => 'nullable|date',
+                'status'              => 'nullable|in:Price Requested,Pending,Closed,Completed,Regret',
                 'revised_value'       => 'nullable|numeric|min:0',
 
-                'items'               => 'required|array|min:1',
-                'items.*.id'          => 'required|exists:inquiries,id',
-                'items.*.price'       => 'required|numeric|min:0'
+                'items'               => 'nullable|array',
+                'items.*.id'          => 'nullable|exists:inquiries,id',
+                'items.*.price'       => 'nullable|numeric|min:0'
             ]);
 
-            foreach ($validated['items'] as $item) {
+            foreach (($validated['items'] ?? []) as $item) {
 
                 Inquiry::where('id', $item['id'])
                     ->where('inquiry_code', $firstInquiry->inquiry_code)
@@ -93,27 +93,13 @@ class NegotiationController extends Controller
         }
     }
 
-   public function negotiationList()
+   public function negotiationList(Request $request)
 {
     try {
 
         $stages = ['Negotiation', 'Customer_PO', 'PO_Principal', 'Sales_Invoice', 'Purchase_Invoice'];
 
-        // Anchor rows only (id === parent_id) — one enquiry group each.
-        //
-        // NOTE: previously this only matched when the ANCHOR row itself
-        // had moved to one of $stages. But convertTonegotiation() only
-        // updates the specific item(s) the user selects — it never
-        // touches the anchor row unless the anchor happens to be one of
-        // the selected items. So converting a single non-anchor item
-        // (e.g. item "c" while the anchor is still "d"/"a" sitting at an
-        // earlier stage) made the whole enquiry silently vanish from this
-        // list, even though the converted item genuinely exists. The
-        // orWhereHas('children') clause (already used by
-        // principalquotationList()/customerquotationList()) fixes this:
-        // an enquiry shows up if EITHER the anchor OR any of its children
-        // have reached one of these stages.
-        $enquiries = Inquiry::with([
+        $query = Inquiry::with([
             'customer:id,name',
             'item:id,name,mat_code,part_model_no,description'
         ])
@@ -123,16 +109,16 @@ class NegotiationController extends Controller
               ->orWhereHas('children', function ($cq) use ($stages) {
                   $cq->whereIn('enquiry_type', $stages);
               });
-        })
-        ->latest()
-        ->get();
+        });
+
+        $query = $this->applyFilters($query, $request);
+
+        $enquiries = $query->get();
 
         $data = [];
 
         foreach ($enquiries as $enquiry) {
 
-            // All negotiation-stage-or-later items across every conversion
-            // batch for this enquiry.
             $items = Inquiry::with([
                 'item:id,name,mat_code,part_model_no,description'
             ])
@@ -144,31 +130,36 @@ class NegotiationController extends Controller
                 continue;
             }
 
-            // Items converted together in one convertTonegotiation() call
-            // get the same negotiation_details + discussion_dates written
-            // onto them at once, so that pair identifies a batch — the
-            // same way quotation_no/date identify a batch upstream.
-            // `status` intentionally excluded, for the same reason as the
-            // other stages: editing one item's status shouldn't fracture
-            // the batch it belongs to.
             $batches = $items->groupBy(function ($row) {
                 return $row->negotiation_details . '|' . $row->discussion_dates;
             });
 
             foreach ($batches as $batchItems) {
 
-                // Use an item that's ACTUALLY in this batch as the source
-                // of truth for the row's fields — never the enquiry
-                // anchor directly. negotiation_details/follow_notes/
-                // discussion_dates/revised_value/status/quotation_no are
-                // only ever written onto the converted items themselves,
-                // not onto the anchor row, so reading them off $enquiry
-                // returned null/stale data whenever the anchor wasn't
-                // among the converted items.
                 $first = $batchItems->first();
 
+                // Batch-level filters — these fields live on the converted
+                // items, not the anchor, so they can't be pushed into the
+                // base query. Filter here, after batching, the same way
+                // status/offer_type are handled in customerquotationList().
+                if ($request->filled('status') && $first->status != $request->status) {
+                    continue;
+                }
+
+                if ($request->filled('search')) {
+                    $search = strtolower($request->search);
+                    $haystack = strtolower(
+                        $first->negotiation_details . ' ' .
+                        $first->follow_notes . ' ' .
+                        $first->status
+                    );
+                    if (!str_contains($haystack, $search)) {
+                        continue;
+                    }
+                }
+
                 $data[] = [
-                    'id'                   => $first->id, // an item in this batch — used for edit/update actions
+                    'id'                   => $first->id,
                     'parent_id'            => $enquiry->id,
                     'inquiry_id'           => $enquiry->inquiry_id,
                     'inquiry_code'         => $enquiry->inquiry_code,
@@ -190,8 +181,8 @@ class NegotiationController extends Controller
                     'quotation_no'         => $first->quotation_no,
                     'budgetary_no'         => $first->budgetary_no,
 
-                    'items' => $batchItems->map(function ($row) {
-
+                    'items' => $batchItems->groupBy('item_id')->map(function ($group) {
+                        $row = $group->sortBy('id')->first();
                         return [
                             'id'            => $row->id,
                             'item_id'       => $row->item_id,
@@ -199,14 +190,13 @@ class NegotiationController extends Controller
                             'item_name'     => optional($row->item)->name,
                             'description'   => optional($row->item)->description,
                             'part_model_no' => optional($row->item)->part_model_no,
-                            'customer_qty_order' => $row->customer_qty_order,  
+                            'customer_qty_order' => $row->customer_qty_order,
                             'quantity'      => $row->quantity,
                             'price'         => $row->price,
                             'status'        => $row->status,
                             'date'          => optional($row->created_at)->format('Y-m-d'),
                             'isConverted'   => $row->enquiry_type !== 'Negotiation',
                         ];
-
                     })->values()
                 ];
             }
@@ -231,42 +221,31 @@ class NegotiationController extends Controller
      * COMMON FILTER FUNCTION (REUSABLE)
      */
     private function applyFilters($query, Request $req)
-    {
-        // Search
-        if ($req->search) {
-            $query->where(function ($q) use ($req) {
-                $q->where('enquiry_type', 'like', "%{$req->search}%")
-                  ->orWhere('negotiation_details', 'like', "%{$req->search}%")
-                  ->orWhere('follow_notes', 'like', "%{$req->search}%")
-                  ->orWhere('status', 'like', "%{$req->search}%");
-            });
+{
+    // Date filter — manual range wins if both given
+    if ($req->from_date && $req->to_date) {
+        $query->whereBetween('created_at', [
+            $req->from_date . ' 00:00:00',
+            $req->to_date . ' 23:59:59'
+        ]);
+    } elseif ($req->period) {
+        [$start, $end] = $this->resolvePeriodRange($req->period);
+
+        if ($start && $end) {
+            $query->whereBetween('created_at', [$start, $end]);
         }
-
-        // Date filter — manual range wins if both given
-        if ($req->from_date && $req->to_date) {
-            $query->whereBetween('created_at', [
-                $req->from_date . ' 00:00:00',
-                $req->to_date . ' 23:59:59'
-            ]);
-        } elseif ($req->period) {
-            [$start, $end] = $this->resolvePeriodRange($req->period);
-
-            if ($start && $end) {
-                $query->whereBetween('created_at', [$start, $end]);
-            }
-        }
-
-        // Sorting
-        $allowedSorts = ['id', 'discussion_dates', 'status', 'created_at'];
-
-        $sortBy = in_array($req->sort_by, $allowedSorts) ? $req->sort_by : 'created_at';
-        $sortOrder = $req->sort_order === 'asc' ? 'asc' : 'desc';
-
-        $query->orderBy($sortBy, $sortOrder);
-
-        return $query;
     }
 
+    // Sorting
+    $allowedSorts = ['id', 'discussion_dates', 'status', 'created_at'];
+
+    $sortBy = in_array($req->sort_by, $allowedSorts) ? $req->sort_by : 'created_at';
+    $sortOrder = $req->sort_order === 'asc' ? 'asc' : 'desc';
+
+    $query->orderBy($sortBy, $sortOrder);
+
+    return $query;
+}
     /**
      * Resolve a named period ('weekly','monthly','quarterly','yearly')
      * into a [start, end] datetime string pair, anchored to "now".
@@ -358,15 +337,15 @@ class NegotiationController extends Controller
 
             $request->validate([
 
-                'inquiry_id'           => 'required|string|max:20',
-                'inquiry_code'         => 'required|string|max:20',
+                'inquiry_id'           => 'nullable|string|max:20',
+                'inquiry_code'         => 'nullable|string|max:20',
 
-                'status'               => 'required',
-                'offer_type'           => 'required|in:Quotation,Budgetary Offer',
+                'status'               => 'nullable',
+                'offer_type'           => 'nullable|in:Quotation,Budgetary Offer',
 
-                'negotiation_details'  => 'required|string',
-                'follow_notes'         => 'required|string',
-                'discussion_dates'     => 'required|date',
+                'negotiation_details'  => 'nullable|string',
+                'follow_notes'         => 'nullable|string',
+                'discussion_dates'     => 'nullable|date',
                 'revised_value'        => 'nullable|numeric|min:0',
             ]);
 

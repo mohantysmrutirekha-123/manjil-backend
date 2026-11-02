@@ -19,18 +19,18 @@ class ItemController extends Controller
     {
         try {
             $req->validate([
-                'name'        => 'required|string|max:255',
+                'name'        => 'nullable|string|max:255',
                 'mat_code'        => 'nullable|string|max:255',
                 'part_model_no'        => 'nullable|string|max:255',
                 'description' => 'nullable|string',
                 'status'      => 'nullable|in:active,inactive',
-                'created_by'  => 'exists:users,id',
+               
             ]);
 
             $itemId = DB::table('items')->insertGetId([
-                'name'        => $req->name,
-                'mat_code'        => $req->mat_code ?? '',
-                'part_model_no'        => $req->part_model_no ?? '',
+                'name'        => trim($req->name ?? '') ?: trim($req->mat_code ?? '') ?: trim($req->description ?? '') ?: 'Item',
+                'mat_code'        => $req->mat_code,
+                'part_model_no'        => $req->part_model_no,
                 'description' => $req->description,
                 'status'      => $req->status ?? 'active',
                 'created_by'      => $req->created_by,
@@ -146,6 +146,62 @@ class ItemController extends Controller
     /**
      * Update Item
      */
+    // public function update(Request $req, $id)
+    // {
+    //     try {
+    //         $item = DB::table('items')->where('id', $id)->first();
+
+    //         if (!$item) {
+    //             return response()->json(['message' => 'Item not found'], 404);
+    //         }
+
+    //         $req->validate([
+    //             'name'        => 'sometimes|required|string|max:255',
+    //             'description' => 'nullable|string',
+    //             'status'      => 'sometimes|required|in:active,inactive',
+    //             'created_by'  => 'nullable|exists:users,id',
+    //         ]);
+
+    //         $oldData = (array) $item;
+
+    //         DB::table('items')->where('id', $id)->update([
+    //             'name'        => $req->name ?? $item->name,
+    //             'description' => $req->description ?? $item->description,
+    //             'status'      => $req->status ?? $item->status,
+    //             'created_by'      => $req->created_by ?? $item->created_by,
+    //             'updated_at'  => now()
+    //         ]);
+
+    //         $updatedItem = DB::table('items')->where('id', $id)->first();
+
+    //         // Audit log
+    //         saveLog('UPDATE_ITEM', 'Item', [
+    //             'old' => $oldData,
+    //             'new' => $updatedItem
+    //         ]);
+
+    //         return response()->json([
+    //             'status'=>200,
+    //             'message' => 'Item updated successfully',
+    //             'data'    => $updatedItem
+    //         ]);
+
+    //     } catch (ValidationException $e) {
+    //         return response()->json([
+    //             'message' => 'Validation failed',
+    //             'errors'  => $e->errors()
+    //         ], 422);
+
+    //     } catch (\Exception $e) {
+    //         Log::error('Item update error: '.$e->getMessage());
+    //         return response()->json([
+    //             'message' => 'Failed to update item'
+    //         ], 500);
+    //     }
+    // }
+
+
+
     public function update(Request $req, $id)
     {
         try {
@@ -156,11 +212,11 @@ class ItemController extends Controller
             }
 
             $req->validate([
-                'name'          => 'sometimes|required|string|max:255',
+                'name'          => 'sometimes|nullable|string|max:255',
                 'description'   => 'nullable|string',
                 'mat_code'      => 'nullable|string|max:255',
                 'part_model_no' => 'nullable|string|max:255',
-                'status'        => 'sometimes|required|in:active,inactive',
+                'status'        => 'sometimes|nullable|in:active,inactive',
                 'created_by'    => 'sometimes|nullable|exists:users,id',
             ]);
 
